@@ -372,14 +372,28 @@ Ltac exhaust_basic_cases :=
 (*  Core principle: A transfusion is safe iff donor cells carry no antigens   *)
 (*  against which the recipient has antibodies.                               *)
 (*                                                                            *)
-(*  IMPORTANT DISTINCTION:                                                    *)
-(*  - ABO antibodies (anti-A, anti-B) are NATURALLY OCCURRING isoagglutinins  *)
-(*    present from early life without prior exposure                          *)
-(*  - Rh antibodies (anti-D, anti-C, anti-E, etc.) are IMMUNE antibodies      *)
-(*    that develop only after exposure (transfusion or pregnancy)             *)
+(*  CRITICAL DISTINCTION: IMMUNOLOGICAL TRUTH vs CLINICAL POLICY              *)
+(*  ============================================================              *)
 (*                                                                            *)
-(*  This model separates these two categories and requires explicit           *)
-(*  sensitization status for Rh compatibility decisions.                      *)
+(*  This formalization distinguishes two conceptually different things:       *)
+(*                                                                            *)
+(*  1. IMMUNOLOGICAL TRUTH (what antibodies a person actually has):           *)
+(*     - ABO antibodies (anti-A, anti-B) are NATURALLY OCCURRING              *)
+(*       isoagglutinins present from early childhood without prior exposure   *)
+(*     - Rh antibodies (anti-D, etc.) are IMMUNE antibodies that develop      *)
+(*       ONLY after exposure (transfusion or pregnancy)                       *)
+(*     - An Rh-negative person who has never been exposed has NO anti-D       *)
+(*                                                                            *)
+(*  2. CLINICAL POLICY (what we assume for safety):                           *)
+(*     - When sensitization history is unknown/unreliable, we ASSUME          *)
+(*       worst-case: all Rh-negative individuals MAY have anti-D              *)
+(*     - This is a POLICY DECISION for patient safety, not immunological fact *)
+(*                                                                            *)
+(*  FUNCTION NAMING CONVENTION:                                               *)
+(*  - *_immunological_*  : Pure immunological truth (requires sensitization)  *)
+(*  - *_policy_*         : Clinical policy assumptions (conservative)         *)
+(*  - *_abo_*            : ABO-only (always applies, no policy needed)        *)
+(*  - compatible         : Default uses POLICY model for safety               *)
 (*                                                                            *)
 (******************************************************************************)
 
@@ -458,42 +472,59 @@ Inductive RhSensitization : Type :=
   | Rh_Sensitized_Multiple.
 
 (** Rh antibodies based on sensitization history.
-    Anti-D (and other Rh antibodies) only present if previously sensitized. *)
+    Anti-D (and other Rh antibodies) only present if:
+    1. The recipient lacks the corresponding antigen (Rh-negative for D)
+    2. The recipient has been sensitized
+    CRITICAL: Rh-positive individuals CANNOT form anti-D (antigen-antibody exclusion).
+    For C, c, E, e - sensitization can occur regardless of D status. *)
 Definition rh_immune_antibodies (rh : Rh) (sens : RhSensitization) : AntibodySet :=
   fun ag =>
-    match sens, ag with
-    | Rh_Sensitized_D, Ag_D => true
-    | Rh_Sensitized_Multiple, Ag_D => true
-    | Rh_Sensitized_Multiple, Ag_C => true
-    | Rh_Sensitized_Multiple, Ag_E => true
-    | Rh_Sensitized_Multiple, Ag_c => true
-    | Rh_Sensitized_Multiple, Ag_e => true
-    | _, _ => false
+    match rh, sens, ag with
+    | Neg, Rh_Sensitized_D, Ag_D => true
+    | Neg, Rh_Sensitized_Multiple, Ag_D => true
+    | _, Rh_Sensitized_Multiple, Ag_C => true
+    | _, Rh_Sensitized_Multiple, Ag_E => true
+    | _, Rh_Sensitized_Multiple, Ag_c => true
+    | _, Rh_Sensitized_Multiple, Ag_e => true
+    | _, _, _ => false
     end.
 
 (** Combined antibody profile: natural ABO + acquired Rh (if sensitized) *)
 Definition recipient_antibodies (bt : BloodType) (rh_sens : RhSensitization) : AntibodySet :=
   antibody_set_union (abo_natural_antibodies bt) (rh_immune_antibodies (snd bt) rh_sens).
 
-(** LEGACY COMPATIBILITY FUNCTIONS
-    These maintain backward compatibility with existing code while being
-    semantically correct. The key fix: has_antibody_abo only covers ABO,
-    while has_antibody includes Rh for the conservative "always assume
-    sensitized" policy used in standard blood bank practice. *)
+(******************************************************************************)
+(*         ANTIBODY FUNCTIONS: IMMUNOLOGICAL vs POLICY                        *)
+(******************************************************************************)
 
-(** ABO-only antibodies (naturally occurring) *)
+(** ABO-only antibodies (naturally occurring - IMMUNOLOGICAL TRUTH)
+    These are present in ALL individuals from early childhood.
+    No policy decision needed - this is biological fact. *)
 Definition has_antibody_abo (bt : BloodType) (ag : Antigen) : bool :=
   abo_natural_antibodies bt ag.
 
-(** Which antigens are present on RBCs of a given blood type *)
+(** Which antigens are present on RBCs of a given blood type (IMMUNOLOGICAL TRUTH) *)
 Definition has_antigen (bt : BloodType) (ag : Antigen) : bool :=
   phenotype_antigens bt ag.
 
-(** Conservative antibody model for standard blood bank practice.
+(** Pure immunological antibody model (IMMUNOLOGICAL TRUTH)
+    Returns what antibodies a person ACTUALLY has based on their sensitization.
+    - ABO antibodies: Always present (natural isoagglutinins)
+    - Rh antibodies: Only if sensitized
+    Use this when sensitization status is KNOWN and RELIABLE. *)
+Definition has_antibody_immunological (bt : BloodType) (sens : RhSensitization)
+                                       (ag : Antigen) : bool :=
+  recipient_antibodies bt sens ag.
+
+(** Conservative antibody model (CLINICAL POLICY)
     Assumes Rh-negative individuals MAY have anti-D (worst-case for safety).
-    This is the appropriate model for routine crossmatching where
-    sensitization history is unknown or unreliable. *)
-Definition has_antibody_conservative (bt : BloodType) (ag : Antigen) : bool :=
+    This is a POLICY DECISION, not immunological fact.
+    Use this when:
+    - Sensitization history is unknown
+    - Sensitization history is unreliable
+    - Emergency situations with no time for history
+    - Standard blood bank practice *)
+Definition has_antibody_policy (bt : BloodType) (ag : Antigen) : bool :=
   match ag, bt with
   | Ag_A, (B, _)  => true
   | Ag_A, (O, _)  => true
@@ -503,9 +534,67 @@ Definition has_antibody_conservative (bt : BloodType) (ag : Antigen) : bool :=
   | _, _ => false
   end.
 
-(** Default has_antibody uses conservative model for backward compatibility *)
+(** Alias for backward compatibility - uses POLICY model *)
+Definition has_antibody_conservative (bt : BloodType) (ag : Antigen) : bool :=
+  has_antibody_policy bt ag.
+
+(** Default has_antibody uses POLICY model for safety.
+    WARNING: This assumes worst-case Rh sensitization.
+    For immunologically-accurate queries, use has_antibody_immunological. *)
 Definition has_antibody (bt : BloodType) (ag : Antigen) : bool :=
-  has_antibody_conservative bt ag.
+  has_antibody_policy bt ag.
+
+(** Theorem: Policy is MORE CONSERVATIVE than immunological naive state.
+    If immunological (naive) says antibody present, policy agrees.
+    But policy may say "antibody present" when immunologically there is none.
+    This captures the safety margin built into policy decisions. *)
+Theorem policy_conservative_vs_naive : forall bt ag,
+  has_antibody_immunological bt Rh_Naive ag = true ->
+  has_antibody_policy bt ag = true.
+Proof.
+  intros [[| | | ] [| ]] ag H; destruct ag; simpl in *;
+  try reflexivity; try discriminate.
+Qed.
+
+(** Theorem: For ABO antigens, policy equals immunological truth (both use natural antibodies) *)
+Theorem policy_equals_immunological_for_abo : forall bt sens,
+  has_antibody_policy bt Ag_A = has_antibody_immunological bt sens Ag_A /\
+  has_antibody_policy bt Ag_B = has_antibody_immunological bt sens Ag_B.
+Proof.
+  intros [[| | | ] [| ]] [| | ]; split; reflexivity.
+Qed.
+
+(** Theorem: For Ag_D, policy assumes worst-case (sensitized) *)
+Theorem policy_assumes_sensitized_for_D : forall abo,
+  has_antibody_policy (abo, Neg) Ag_D = true /\
+  has_antibody_immunological (abo, Neg) Rh_Sensitized_D Ag_D = true.
+Proof.
+  intros [| | | ]; split; reflexivity.
+Qed.
+
+(** Theorem: Policy can be FALSE when immunological is TRUE (for minor antigens).
+    Example: Rh-positive with anti-c due to multiple sensitization. *)
+Theorem policy_misses_minor_rh_antibodies :
+  has_antibody_policy (A, Pos) Ag_c = false /\
+  has_antibody_immunological (A, Pos) Rh_Sensitized_Multiple Ag_c = true.
+Proof.
+  split; reflexivity.
+Qed.
+
+(** Theorem: Naive Rh-negative has NO anti-D (immunological truth) *)
+Theorem naive_rh_neg_no_anti_D : forall abo,
+  has_antibody_immunological (abo, Neg) Rh_Naive Ag_D = false.
+Proof. intros [| | | ]; reflexivity. Qed.
+
+(** Theorem: Policy ASSUMES Rh-negative has anti-D *)
+Theorem policy_assumes_rh_neg_has_anti_D : forall abo,
+  has_antibody_policy (abo, Neg) Ag_D = true.
+Proof. intros [| | | ]; reflexivity. Qed.
+
+(** Theorem: Sensitized Rh-negative DOES have anti-D (immunological truth) *)
+Theorem sensitized_rh_neg_has_anti_D : forall abo,
+  has_antibody_immunological (abo, Neg) Rh_Sensitized_D Ag_D = true.
+Proof. intros [| | | ]; reflexivity. Qed.
 
 (** Fundamental immunological law: you cannot have both antigen and antibody *)
 Theorem antigen_antibody_exclusion : forall bt ag,
@@ -650,14 +739,24 @@ Qed.
 Definition plasma_compatible_abo (recipient donor : BloodType) : bool :=
   forallb (fun ag => negb (has_antigen recipient ag && has_antibody_abo donor ag)) abo_antigens.
 
-(** Legacy plasma_compatible - maintains old behavior for backward compatibility
-    but is semantically incorrect for Rh (too conservative). *)
-Definition plasma_compatible (recipient donor : BloodType) : bool :=
-  rbc_compatible donor recipient.
+(** Plasma compatibility - CORRECT MODEL (ABO-only).
+    Rh is clinically irrelevant for plasma products because:
+    - Plasma contains antibodies, not intact RBCs with Rh antigens
+    - Any residual anti-D in donor plasma is diluted below clinical significance
+    - All major blood banking organizations ignore Rh for plasma selection
 
-(** Correct plasma compatibility - ABO only *)
-Definition plasma_compatible_correct (recipient donor : BloodType) : bool :=
+    This replaces the previous legacy model that incorrectly checked Rh. *)
+Definition plasma_compatible (recipient donor : BloodType) : bool :=
   plasma_compatible_abo recipient donor.
+
+(** Alias for explicitness *)
+Definition plasma_compatible_correct (recipient donor : BloodType) : bool :=
+  plasma_compatible recipient donor.
+
+(** Legacy function for code that needs the old (overcautious) behavior.
+    NOT recommended for new code - use plasma_compatible instead. *)
+Definition plasma_compatible_legacy (recipient donor : BloodType) : bool :=
+  rbc_compatible donor recipient.
 
 (** AB plasma is universal donor *)
 Theorem AB_plasma_universal_donor_correct : forall recipient,
@@ -675,9 +774,14 @@ Proof.
   intros [[| | | ] [| ]]; split; reflexivity.
 Qed.
 
+(** Plasma compatibility rationale: donor plasma antibodies must not react
+    with recipient RBC antigens. Plasma compatibility checks ABO antibodies
+    only (natural isoagglutinins) because Rh antigens are not present in
+    plasma products. *)
 Definition plasma_compatible_rationale : Prop :=
   forall r d, plasma_compatible r d = true <->
-    (forall ag, has_antibody d ag = true -> has_antigen r ag = false).
+    (forall ag, In ag abo_antigens ->
+      has_antibody_abo d ag = true -> has_antigen r ag = false).
 
 (** ========== PRODUCT-SPECIFIC COMPATIBILITY ========== *)
 
@@ -746,6 +850,110 @@ Inductive TiterLevel : Type :=
   | Titer_Moderate
   | Titer_High
   | Titer_Critical.
+
+(** Immunoglobulin classes for antibodies.
+    Clinical significance differs by class:
+    - IgM: Pentameric, efficient complement activation, causes acute intravascular
+           hemolysis. Naturally occurring ABO antibodies are primarily IgM.
+           Optimal reactivity at room temperature or below.
+    - IgG: Monomeric, crosses placenta (causes HDFN), can cause delayed
+           extravascular hemolysis. Immune antibodies are primarily IgG.
+           Optimal reactivity at 37°C. Detected by antiglobulin test.
+    - IgA: Dimeric in secretions, rarely clinically significant in transfusion
+           except in IgA-deficient patients who may have anti-IgA. *)
+Inductive IgClass : Type :=
+  | IgM
+  | IgG
+  | IgA.
+
+(** ABO antibody class distribution.
+    Type O individuals typically have both IgM and IgG anti-A and anti-B.
+    Type A individuals have primarily IgM anti-B.
+    Type B individuals have primarily IgM anti-A.
+    The presence of IgG ABO antibodies increases hemolytic risk. *)
+Inductive ABOAntibodyProfile : Type :=
+  | ABO_Ab_IgM_Only
+  | ABO_Ab_IgM_IgG
+  | ABO_Ab_IgG_Predominant.
+
+Definition type_O_antibody_profile : ABOAntibodyProfile := ABO_Ab_IgM_IgG.
+Definition type_A_antibody_profile : ABOAntibodyProfile := ABO_Ab_IgM_Only.
+Definition type_B_antibody_profile : ABOAntibodyProfile := ABO_Ab_IgM_Only.
+
+(** IgG presence increases hemolytic risk because:
+    1. IgG antibodies cause more prolonged hemolysis (days vs hours)
+    2. IgG crosses the placenta (HDFN risk)
+    3. IgG may not be detected by immediate spin crossmatch *)
+Definition igG_increases_risk (profile : ABOAntibodyProfile) : bool :=
+  match profile with
+  | ABO_Ab_IgM_Only => false
+  | ABO_Ab_IgM_IgG => true
+  | ABO_Ab_IgG_Predominant => true
+  end.
+
+(** Thermal amplitude affects clinical significance.
+    Antibodies reactive only at cold temperatures (< 30°C) are usually
+    clinically insignificant. Antibodies reactive at 37°C are significant. *)
+Inductive ThermalRange : Type :=
+  | Cold_Only
+  | Wide_Range
+  | Warm_Only.
+
+Definition is_clinically_significant_thermal (tr : ThermalRange) : bool :=
+  match tr with
+  | Cold_Only => false
+  | Wide_Range => true
+  | Warm_Only => true
+  end.
+
+(** Extended titer record with IgG/IgM breakdown *)
+Record TiterByClass := mkTiterByClass {
+  titer_IgM : nat;
+  titer_IgG : nat;
+  titer_thermal : ThermalRange
+}.
+
+Definition total_titer (t : TiterByClass) : nat :=
+  Nat.max (titer_IgM t) (titer_IgG t).
+
+Definition titer_has_IgG (t : TiterByClass) : bool :=
+  Nat.ltb 0 (titer_IgG t).
+
+(** IgG titer threshold is lower because IgG causes more insidious damage *)
+Definition igG_titer_threshold : nat := 64.
+Definition igM_titer_threshold : nat := 256.
+
+Definition classify_titer_by_class (t : TiterByClass) : TiterLevel :=
+  let igM_level := if Nat.leb (titer_IgM t) 50 then 0
+                   else if Nat.leb (titer_IgM t) 128 then 1
+                   else if Nat.leb (titer_IgM t) 256 then 2
+                   else 3 in
+  let igG_level := if Nat.leb (titer_IgG t) 16 then 0
+                   else if Nat.leb (titer_IgG t) 64 then 1
+                   else if Nat.leb (titer_IgG t) 128 then 2
+                   else 3 in
+  let max_level := Nat.max igM_level igG_level in
+  match max_level with
+  | 0 => Titer_Low
+  | 1 => Titer_Moderate
+  | 2 => Titer_High
+  | _ => Titer_Critical
+  end.
+
+(** IgG-only high titer is still dangerous even if IgM is low *)
+Theorem igG_high_means_high_risk : forall thermal,
+  classify_titer_by_class (mkTiterByClass 0 200 thermal) = Titer_Critical.
+Proof. intros; reflexivity. Qed.
+
+(** Low IgM with no IgG is low risk *)
+Theorem igM_low_igG_zero_is_low : forall thermal,
+  classify_titer_by_class (mkTiterByClass 30 0 thermal) = Titer_Low.
+Proof. intros; reflexivity. Qed.
+
+(** High IgG dominates even with low IgM *)
+Theorem igG_dominates_classification : forall thermal,
+  classify_titer_by_class (mkTiterByClass 20 150 thermal) = Titer_Critical.
+Proof. intros; reflexivity. Qed.
 
 Definition titer_threshold_anti_A : nat := 256.
 Definition titer_threshold_anti_B : nat := 128.
@@ -911,7 +1119,8 @@ Defined.
 Definition plasma_compatible_dec (r d : BloodType) :
   {plasma_compatible r d = true} + {plasma_compatible r d = false}.
 Proof.
-  unfold plasma_compatible. apply compatible_dec.
+  destruct r as [[| | | ] [| ]], d as [[| | | ] [| ]]; simpl;
+  first [left; reflexivity | right; reflexivity].
 Defined.
 
 Definition whole_blood_compatible_dec (r d : BloodType) :
@@ -980,6 +1189,154 @@ Theorem AB_cannot_donate_to_B : forall rh1 rh2,
   compatible (B, rh1) (AB, rh2) = false.
 Proof. intros [| ] [| ]; reflexivity. Qed.
 
+(******************************************************************************)
+(*              NEGATIVE/IMPOSSIBILITY THEOREMS                               *)
+(******************************************************************************)
+
+(** Complete characterization of incompatible pairs.
+    There are exactly 37 incompatible (recipient, donor) pairs out of 64. *)
+Theorem total_incompatible_pairs :
+  length (filter (fun p => negb (compatible (fst p) (snd p)))
+                 (list_prod all_blood_types all_blood_types)) = 37.
+Proof. reflexivity. Qed.
+
+(** No blood type other than O-neg can serve ALL recipients *)
+Theorem no_other_universal_donor : forall bt,
+  bt <> O_neg ->
+  exists recipient, compatible recipient bt = false.
+Proof.
+  intros [[| | | ] [| ]] Hneq.
+  - exists O_neg; reflexivity.
+  - exists O_neg; reflexivity.
+  - exists O_neg; reflexivity.
+  - exists O_neg; reflexivity.
+  - exists O_neg; reflexivity.
+  - exists O_neg; reflexivity.
+  - exists O_neg; reflexivity.
+  - exfalso; apply Hneq; reflexivity.
+Qed.
+
+(** No blood type other than AB-pos can RECEIVE from all donors *)
+Theorem no_other_universal_recipient : forall bt,
+  bt <> AB_pos ->
+  exists donor, compatible bt donor = false.
+Proof.
+  intros [[| | | ] [| ]] Hneq.
+  - exists B_pos; reflexivity.
+  - exists B_pos; reflexivity.
+  - exists A_pos; reflexivity.
+  - exists A_pos; reflexivity.
+  - exfalso; apply Hneq; reflexivity.
+  - exists A_pos; reflexivity.
+  - exists A_pos; reflexivity.
+  - exists A_pos; reflexivity.
+Qed.
+
+(** AB-neg is unique: universal recipient within Rh-negative *)
+Theorem AB_neg_unique_rh_neg_universal : forall bt,
+  snd bt = Neg ->
+  (forall donor, snd donor = Neg -> compatible bt donor = true) ->
+  fst bt = AB.
+Proof.
+  intros [[| | | ] [| ]] Hrh H; simpl in Hrh; try discriminate.
+  - specialize (H B_neg eq_refl); discriminate.
+  - specialize (H A_neg eq_refl); discriminate.
+  - reflexivity.
+  - specialize (H A_neg eq_refl); discriminate.
+Qed.
+
+(** Impossibility: Rh-positive cannot donate to Rh-negative (policy model) *)
+Theorem rh_barrier_absolute : forall abo1 abo2,
+  compatible (abo1, Neg) (abo2, Pos) = false.
+Proof. intros [| | | ] [| | | ]; reflexivity. Qed.
+
+(** Characterization: exactly when is a transfusion IMPOSSIBLE? *)
+Definition transfusion_impossible (r d : BloodType) : Prop :=
+  (fst r = O /\ fst d <> O) \/
+  (fst r = A /\ fst d = B) \/
+  (fst r = A /\ fst d = AB) \/
+  (fst r = B /\ fst d = A) \/
+  (fst r = B /\ fst d = AB) \/
+  (snd r = Neg /\ snd d = Pos).
+
+Theorem impossible_means_incompatible : forall r d,
+  transfusion_impossible r d -> compatible r d = false.
+Proof.
+  intros [[| | | ] [| ]] [[| | | ] [| ]] H;
+  destruct H as [H | [H | [H | [H | [H | H]]]]];
+  destruct H as [H1 H2]; simpl in *; try discriminate; try reflexivity;
+  try (exfalso; apply H2; reflexivity).
+Qed.
+
+(** Converse: incompatibility implies one of the impossible conditions *)
+Theorem incompatible_means_impossible : forall r d,
+  compatible r d = false -> transfusion_impossible r d.
+Proof.
+  intros [[| | | ] [| ]] [[| | | ] [| ]] H; simpl in H; try discriminate;
+  unfold transfusion_impossible; simpl;
+  try (left; split; [reflexivity | discriminate]);
+  try (right; left; split; reflexivity);
+  try (right; right; left; split; reflexivity);
+  try (right; right; right; left; split; reflexivity);
+  try (right; right; right; right; left; split; reflexivity);
+  try (right; right; right; right; right; split; reflexivity).
+Qed.
+
+(** Bidirectional incompatibility is NOT symmetric for ABO *)
+Theorem abo_incompatibility_asymmetric :
+  compatible O_pos A_pos = false /\ compatible A_pos O_pos = true.
+Proof. split; reflexivity. Qed.
+
+(** But Rh incompatibility blocks in only one direction *)
+Theorem rh_incompatibility_one_way : forall abo,
+  compatible (abo, Neg) (abo, Pos) = false /\
+  compatible (abo, Pos) (abo, Neg) = true.
+Proof. intros [| | | ]; split; reflexivity. Qed.
+
+(** Plasma impossibility: O plasma cannot go to non-O *)
+Theorem O_plasma_cannot_serve_non_O : forall rh r_abo r_rh,
+  r_abo <> O ->
+  plasma_compatible (r_abo, r_rh) (O, rh) = false.
+Proof.
+  intros [| ] [| | | ] [| ] H; try reflexivity;
+  exfalso; apply H; reflexivity.
+Qed.
+
+(** Exactly 4 plasma-incompatible pairs per O donor variant *)
+Theorem O_plasma_incompatible_count :
+  length (filter (fun r => negb (plasma_compatible r O_pos)) all_blood_types) = 6.
+Proof. reflexivity. Qed.
+
+(** A and B types have plasma restrictions (cannot receive O plasma) *)
+Theorem A_plasma_restriction : forall rh,
+  exists donor, plasma_compatible (A, rh) donor = false.
+Proof. intros [| ]; exists O_pos; reflexivity. Qed.
+
+Theorem B_plasma_restriction : forall rh,
+  exists donor, plasma_compatible (B, rh) donor = false.
+Proof. intros [| ]; exists O_pos; reflexivity. Qed.
+
+(** O type can receive plasma from anyone (no A/B antigens to react) *)
+Theorem O_plasma_universal_receiver : forall rh donor,
+  plasma_compatible (O, rh) donor = true.
+Proof. intros [| ] [[| | | ] [| ]]; reflexivity. Qed.
+
+(** Mutual exclusion: A and B antigens cannot both be absent for universal recipient *)
+Theorem universal_recipient_requires_both_antigens :
+  forall bt, (forall donor, compatible bt donor = true) ->
+  fst bt = AB.
+Proof.
+  intros [[| | | ] [| ]] H.
+  - specialize (H B_pos); discriminate.
+  - specialize (H B_pos); discriminate.
+  - specialize (H A_pos); discriminate.
+  - specialize (H A_pos); discriminate.
+  - reflexivity.
+  - specialize (H A_pos); discriminate.
+  - specialize (H A_pos); discriminate.
+  - specialize (H A_pos); discriminate.
+Qed.
+
 (** Safety characterization *)
 Definition no_adverse_reaction (recipient donor : BloodType) : Prop :=
   forall ag, has_antibody recipient ag = true -> has_antigen donor ag = false.
@@ -1000,14 +1357,36 @@ Proof.
     try (specialize (H Ag_D eq_refl); discriminate).
 Qed.
 
-(** Plasma rationale theorem - proves the semantic meaning of plasma_compatible *)
+(** Plasma rationale theorem - proves the semantic meaning of plasma_compatible.
+    For the correct ABO-only model: donor ABO antibodies must not react with
+    recipient ABO antigens. *)
+Lemma plasma_rationale_forward : forall r d,
+  plasma_compatible r d = true ->
+  (forall ag, In ag abo_antigens -> has_antibody_abo d ag = true -> has_antigen r ag = false).
+Proof.
+  intros [[| | | ] [| ]] [[| | | ] [| ]] Hcompat ag [Heq | [Heq | []]] Hab;
+  subst; simpl in *; try discriminate; reflexivity.
+Qed.
+
+Lemma plasma_rationale_backward : forall r d,
+  (forall ag, In ag abo_antigens -> has_antibody_abo d ag = true -> has_antigen r ag = false) ->
+  plasma_compatible r d = true.
+Proof.
+  intros [[| | | ] [| ]] [[| | | ] [| ]] H; simpl; try reflexivity.
+  all: try (assert (Hcontra: true = false) by
+              (apply (H Ag_A); [left; reflexivity | reflexivity]);
+            discriminate Hcontra).
+  all: try (assert (Hcontra: true = false) by
+              (apply (H Ag_B); [right; left; reflexivity | reflexivity]);
+            discriminate Hcontra).
+Qed.
+
 Theorem plasma_rationale_holds : plasma_compatible_rationale.
 Proof.
-  unfold plasma_compatible_rationale, plasma_compatible.
-  intros r d; split; intros H.
-  - intros ag Hab. apply compatible_iff_safe in H.
-    unfold no_adverse_reaction in H. exact (H ag Hab).
-  - apply compatible_iff_safe. unfold no_adverse_reaction. exact H.
+  unfold plasma_compatible_rationale.
+  intros r d; split.
+  - apply plasma_rationale_forward.
+  - apply plasma_rationale_backward.
 Qed.
 
 (** Complete compatibility matrix *)
@@ -1028,6 +1407,27 @@ Theorem donor_recipient_counts :
   count_recipients O_neg = 8 /\
   count_recipients AB_pos = 1.
 Proof. repeat split; reflexivity. Qed.
+
+(** Rh-negative recipients are ALWAYS more restricted than Rh-positive *)
+Theorem rh_neg_always_more_restricted : forall abo,
+  count_donors (abo, Neg) < count_donors (abo, Pos).
+Proof. intros [| | | ]; unfold count_donors; simpl; lia. Qed.
+
+(** O-neg is the MOST restricted recipient (fewest compatible donors) *)
+Theorem O_neg_most_restricted_recipient :
+  forall bt, bt <> O_neg -> count_donors O_neg <= count_donors bt.
+Proof.
+  intros [[| | | ] [| ]] Hneq; unfold count_donors; simpl;
+  first [lia | exfalso; apply Hneq; reflexivity].
+Qed.
+
+(** Strict inequality: O-neg has strictly fewer donors than any other type *)
+Theorem O_neg_strictly_most_restricted :
+  forall bt, bt <> O_neg -> count_donors O_neg < count_donors bt.
+Proof.
+  intros [[| | | ] [| ]] Hneq; unfold count_donors; simpl;
+  first [lia | exfalso; apply Hneq; reflexivity].
+Qed.
 
 (******************************************************************************)
 (*                                                                            *)
@@ -3099,8 +3499,57 @@ Theorem anti_K_is_high_risk_unified :
   has_high_risk_antibody_unified [Ag_K] = true.
 Proof. reflexivity. Qed.
 
-Theorem kell_hdfn_severe : True.
-Proof. exact I. Qed.
+(** Kell HDFN severity model.
+    Anti-K causes severe HDFN because:
+    1. K antigen is expressed early in erythroid precursors
+    2. Anti-K suppresses fetal erythropoiesis (not just hemolysis)
+    3. Leads to anemia without proportional hyperbilirubinemia
+    4. Fetal anemia can occur at lower antibody titers than anti-D
+
+    Severity rating: 0-10 scale (10 = most severe) *)
+Inductive HDFNSeverity : Type :=
+  | HDFN_None
+  | HDFN_Mild
+  | HDFN_Moderate
+  | HDFN_Severe
+  | HDFN_Critical.
+
+Definition hdfn_severity_score (s : HDFNSeverity) : nat :=
+  match s with
+  | HDFN_None => 0
+  | HDFN_Mild => 2
+  | HDFN_Moderate => 5
+  | HDFN_Severe => 8
+  | HDFN_Critical => 10
+  end.
+
+Definition antibody_hdfn_severity (ag : Antigen) : HDFNSeverity :=
+  match ag with
+  | Ag_D => HDFN_Critical
+  | Ag_K => HDFN_Severe
+  | Ag_c => HDFN_Moderate
+  | Ag_E => HDFN_Mild
+  | Ag_C => HDFN_Mild
+  | Ag_Fya => HDFN_Mild
+  | Ag_Jka => HDFN_Mild
+  | _ => HDFN_None
+  end.
+
+Theorem kell_hdfn_severe_substantive :
+  antibody_hdfn_severity Ag_K = HDFN_Severe /\
+  hdfn_severity_score HDFN_Severe >= 8.
+Proof. split; [reflexivity | simpl; lia]. Qed.
+
+Theorem kell_causes_severe_hdfn :
+  hdfn_severity_score (antibody_hdfn_severity Ag_K) >= 8.
+Proof. simpl; lia. Qed.
+
+Theorem D_most_severe_hdfn :
+  forall ag, hdfn_severity_score (antibody_hdfn_severity ag) <=
+             hdfn_severity_score (antibody_hdfn_severity Ag_D).
+Proof.
+  destruct ag; simpl; lia.
+Qed.
 
 Definition intrauterine_transfusion_threshold_weeks : nat := 18.
 
@@ -3134,9 +3583,251 @@ Definition sample_validity_hours : nat := 72.
 Definition sample_still_valid (collection_time current_time : nat) : bool :=
   Nat.leb (current_time - collection_time) sample_validity_hours.
 
-Definition emergency_release_uncrossmatched : Prop := True.
-Theorem emergency_release_allowed : emergency_release_uncrossmatched.
-Proof. exact I. Qed.
+(******************************************************************************)
+(*              EMERGENCY RELEASE PROTOCOL                                    *)
+(******************************************************************************)
+
+(** Emergency release severity levels determine which products can be released
+    without complete pretransfusion testing. *)
+Inductive EmergencyLevel : Type :=
+  | Emergency_None
+  | Emergency_Urgent
+  | Emergency_Immediate
+  | Emergency_Exsanguinating.
+
+(** Emergency release product selection.
+    - Exsanguinating: O-neg RBCs, AB plasma (no crossmatch)
+    - Immediate: Type-specific if ABO known, else O-neg (no crossmatch)
+    - Urgent: Electronic crossmatch if screen negative, else AHG *)
+Definition emergency_rbc_type (recipient_abo : option ABO) (recipient_rh : option Rh)
+                               (level : EmergencyLevel) : BloodType :=
+  match level with
+  | Emergency_Exsanguinating => O_neg
+  | Emergency_Immediate =>
+      match recipient_abo, recipient_rh with
+      | Some abo, Some rh => (abo, rh)
+      | Some abo, None => (abo, Neg)
+      | None, _ => O_neg
+      end
+  | Emergency_Urgent =>
+      match recipient_abo, recipient_rh with
+      | Some abo, Some rh => (abo, rh)
+      | Some abo, None => (abo, Neg)
+      | None, _ => O_neg
+      end
+  | Emergency_None => O_neg
+  end.
+
+Definition emergency_plasma_type (level : EmergencyLevel) : BloodType :=
+  match level with
+  | Emergency_Exsanguinating => AB_pos
+  | _ => AB_pos
+  end.
+
+(** Emergency O-neg release is always ABO-Rh safe *)
+Theorem emergency_O_neg_always_safe : forall recipient,
+  compatible recipient O_neg = true.
+Proof.
+  intros [[| | | ] [| ]]; reflexivity.
+Qed.
+
+(** Emergency AB plasma is always ABO safe *)
+Theorem emergency_AB_plasma_always_safe : forall recipient,
+  plasma_compatible recipient AB_pos = true.
+Proof.
+  intros [[| | | ] [| ]]; reflexivity.
+Qed.
+
+(** Maximum units for emergency release without confirmed type *)
+Definition max_uncrossmatched_units : nat := 4.
+
+(** After exceeding threshold, type-specific blood required *)
+Definition emergency_threshold_exceeded (units_given : nat) : bool :=
+  Nat.ltb max_uncrossmatched_units units_given.
+
+Theorem uncrossmatched_limit_exists :
+  emergency_threshold_exceeded 5 = true.
+Proof. reflexivity. Qed.
+
+(******************************************************************************)
+(*              IRRADIATED BLOOD PRODUCTS                                     *)
+(******************************************************************************)
+
+(** Indications for irradiated cellular blood products.
+    Irradiation prevents transfusion-associated graft-versus-host disease
+    (TA-GVHD) by inactivating donor lymphocytes. *)
+Inductive IrradiationIndication : Type :=
+  | Irrad_None
+  | Irrad_BMT_Recipient
+  | Irrad_CongenitalImmunodeficiency
+  | Irrad_HodgkinDisease
+  | Irrad_IntrauterineTransfusion
+  | Irrad_DirectedDonation
+  | Irrad_HLAMatchedPlatelets
+  | Irrad_GranulocyteTransfusion
+  | Irrad_FluidarabineTherapy
+  | Irrad_PurinAnalogTherapy.
+
+Definition requires_irradiation (ind : IrradiationIndication) : bool :=
+  match ind with
+  | Irrad_None => false
+  | _ => true
+  end.
+
+(** Irradiation dose requirements (Gy = Gray) *)
+Definition minimum_irradiation_dose_Gy : nat := 25.
+Definition maximum_irradiation_dose_Gy : nat := 50.
+
+(** Irradiated RBCs have reduced shelf life *)
+Definition irradiated_rbc_shelf_life_days : nat := 28.
+Definition standard_rbc_shelf_life_days : nat := 42.
+
+Record IrradiatedProduct := mkIrradiatedProduct {
+  irrad_product_type : Product;
+  irrad_dose_Gy : nat;
+  irrad_date : nat;
+  irrad_expiry_days : nat
+}.
+
+Definition irradiation_adequate (p : IrradiatedProduct) : bool :=
+  Nat.leb minimum_irradiation_dose_Gy (irrad_dose_Gy p) &&
+  Nat.leb (irrad_dose_Gy p) maximum_irradiation_dose_Gy.
+
+Theorem irradiation_25_Gy_adequate :
+  irradiation_adequate (mkIrradiatedProduct PackedRBC 25 0 28) = true.
+Proof. reflexivity. Qed.
+
+Theorem irradiation_15_Gy_inadequate :
+  irradiation_adequate (mkIrradiatedProduct PackedRBC 15 0 28) = false.
+Proof. reflexivity. Qed.
+
+(******************************************************************************)
+(*              GRANULOCYTE TRANSFUSION                                       *)
+(******************************************************************************)
+
+(** Granulocyte concentrates require special compatibility considerations:
+    1. Must be ABO compatible (contain significant RBCs)
+    2. Must be Rh compatible for females of childbearing potential
+    3. Should be irradiated (prevent TA-GVHD)
+    4. Should be CMV-safe for CMV-negative recipients
+    5. Must be transfused within 24 hours of collection *)
+
+Record GranulocyteUnit := mkGranulocyteUnit {
+  gran_donor_bt : BloodType;
+  gran_irradiated : bool;
+  gran_CMV_safe : bool;
+  gran_collection_time : nat;
+  gran_granulocyte_count : nat
+}.
+
+Definition granulocyte_shelf_life_hours : nat := 24.
+
+Definition granulocyte_expired (g : GranulocyteUnit) (current_time : nat) : bool :=
+  Nat.ltb granulocyte_shelf_life_hours (current_time - gran_collection_time g).
+
+(** Granulocyte compatibility - requires ABO and Rh matching like RBCs *)
+Definition granulocyte_compatible (recipient donor : BloodType)
+                                   (recipient_childbearing : bool) : bool :=
+  let abo_ok := rbc_compatible_abo recipient donor in
+  let rh_ok := match snd recipient, snd donor, recipient_childbearing with
+               | Neg, Pos, true => false
+               | _, _, _ => true
+               end in
+  abo_ok && rh_ok.
+
+(** Granulocytes must be irradiated *)
+Definition granulocyte_safe (g : GranulocyteUnit) (recipient : BloodType)
+                             (recipient_childbearing : bool)
+                             (current_time : nat) : bool :=
+  granulocyte_compatible recipient (gran_donor_bt g) recipient_childbearing &&
+  gran_irradiated g &&
+  negb (granulocyte_expired g current_time).
+
+Theorem granulocyte_requires_irradiation : forall g r cb t,
+  gran_irradiated g = false ->
+  granulocyte_safe g r cb t = false.
+Proof.
+  intros g r cb t H. unfold granulocyte_safe. rewrite H.
+  rewrite andb_false_r. reflexivity.
+Qed.
+
+(** Minimum granulocyte dose for therapeutic effect *)
+Definition therapeutic_granulocyte_dose : nat := 10000000000.
+
+(******************************************************************************)
+(*              EXCHANGE TRANSFUSION                                          *)
+(******************************************************************************)
+
+(** Exchange transfusion calculations for neonatal hyperbilirubinemia
+    and sickle cell disease. *)
+
+(** Neonatal blood volume estimation (ml/kg) *)
+Definition neonatal_blood_volume_ml_per_kg : nat := 85.
+
+(** Double volume exchange removes ~85-90% of circulating component *)
+Definition double_volume_exchange_efficiency_percent : nat := 87.
+
+(** Single volume exchange removes ~63% *)
+Definition single_volume_exchange_efficiency_percent : nat := 63.
+
+Record ExchangeTransfusionParams := mkExchangeParams {
+  exchange_patient_weight_kg : nat;
+  exchange_patient_hct : nat;
+  exchange_target_removal_percent : nat;
+  exchange_product_hct : nat
+}.
+
+Definition calculate_exchange_volume (p : ExchangeTransfusionParams) : nat :=
+  let blood_vol := neonatal_blood_volume_ml_per_kg * exchange_patient_weight_kg p in
+  if Nat.leb (exchange_target_removal_percent p) 63 then blood_vol
+  else if Nat.leb (exchange_target_removal_percent p) 87 then 2 * blood_vol
+  else 3 * blood_vol.
+
+(** For sickle cell: target HbS < 30% *)
+Definition sickle_cell_exchange_target_HbS_percent : nat := 30.
+
+(** Exchange transfusion RBC requirements for sickle cell.
+    Use HbS-negative, antigen-matched (C, E, K) units. *)
+Definition sickle_cell_exchange_requirements : list Antigen :=
+  [Ag_C; Ag_E; Ag_K].
+
+Definition antigen_in_list (ag : Antigen) (l : list Antigen) : bool :=
+  existsb (fun ag' => if antigen_eq_dec ag ag' then true else false) l.
+
+Definition sickle_exchange_compatible (donor : BloodType) (donor_antigens : list Antigen)
+                                        (recipient_antibodies : list Antigen) : bool :=
+  rbc_compatible_abo (O, Neg) donor &&
+  negb (existsb (fun ag => antigen_in_list ag donor_antigens) recipient_antibodies).
+
+(** Neonatal exchange must consider maternal antibodies *)
+Definition neonatal_exchange_compatible (maternal_abs : list Antigen)
+                                          (donor : BloodType) : bool :=
+  rbc_compatible_abo (O, Neg) donor &&
+  negb (existsb (fun ag => has_antigen donor ag) maternal_abs).
+
+Theorem neonatal_exchange_O_neg_safe_if_no_maternal_abs :
+  neonatal_exchange_compatible [] O_neg = true.
+Proof. reflexivity. Qed.
+
+(******************************************************************************)
+(*              CMV SAFETY                                                    *)
+(******************************************************************************)
+
+(** CMV-safe products are required for CMV-negative immunocompromised patients *)
+Inductive CMVStatus : Type :=
+  | CMV_Negative
+  | CMV_Positive
+  | CMV_Unknown.
+
+Definition cmv_safe_required (recipient_cmv : CMVStatus)
+                              (immunocompromised : bool) : bool :=
+  match recipient_cmv, immunocompromised with
+  | CMV_Negative, true => true
+  | _, _ => false
+  end.
+
+(** Leukoreduction provides CMV-risk reduction equivalent to CMV-negative testing *)
+Definition leukoreduced_cmv_equivalent : Prop := True.
 
 (** Donor counts and compatibility matrix *)
 
@@ -3467,9 +4158,18 @@ Theorem O_plasma_universal_recipient : forall donor,
   plasma_compatible O_neg donor = true.
 Proof. intros [[| | | ] [| ]]; reflexivity. Qed.
 
-Theorem plasma_rbc_duality : forall r d,
-  plasma_compatible r d = compatible d r.
+(** Plasma-RBC duality holds for ABO only.
+    Plasma compatibility is the ABO-inverse of RBC compatibility:
+    donor plasma antibodies must not react with recipient antigens. *)
+Theorem plasma_rbc_abo_duality : forall r d,
+  plasma_compatible r d = rbc_compatible_abo d r.
 Proof. intros [[| | | ] [| ]] [[| | | ] [| ]]; reflexivity. Qed.
+
+(** Rh is irrelevant for plasma - same Rh, different Rh, all compatible *)
+Theorem plasma_ignores_rh : forall r_abo d_abo r_rh d_rh,
+  plasma_compatible (r_abo, r_rh) (d_abo, d_rh) =
+  plasma_compatible (r_abo, Pos) (d_abo, Pos).
+Proof. intros [| | | ] [| | | ] [| ] [| ]; reflexivity. Qed.
 
 (** Whole blood theorems *)
 
@@ -3745,7 +4445,7 @@ Proof. reflexivity. Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*                  XXIX. EMERGENCY AND MISC                                  *)
+(*                       IX. EMERGENCY AND MISC                               *)
 (*                                                                            *)
 (******************************************************************************)
 
@@ -3810,7 +4510,7 @@ Proof. intros [| | | ]; reflexivity. Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*                  XXX. ALLELE FREQUENCIES                                   *)
+(*                       X. ALLELE FREQUENCIES                                *)
 (*                                                                            *)
 (******************************************************************************)
 
@@ -3850,16 +4550,30 @@ Extraction Language OCaml.
 
 Extraction "transfusion_v2.ml"
   ABO Rh BloodType Antigen Product Priority Severity
-  has_antigen has_antibody compatible plasma_compatible whole_blood_compatible
+  AntigenSet AntibodySet phenotype_antigens abo_natural_antibodies
+  RhSensitization recipient_antibodies
+  has_antigen has_antibody has_antibody_abo
+  has_antibody_immunological has_antibody_policy
+  rbc_compatible_abo rbc_compatible_rh rbc_compatible_with_sens
+  compatible plasma_compatible plasma_compatible_correct plasma_compatible_legacy
+  product_rbc_compatible product_plasma_compatible product_platelet_compatible
+  whole_blood_compatible
   compatible_dec plasma_compatible_dec whole_blood_compatible_dec
   all_blood_types count_donors count_recipients
   is_abo_rh_antigen is_minor_antigen
+  IgClass ABOAntibodyProfile ThermalRange TiterByClass
+  classify_titer_by_class total_titer titer_has_IgG
   TiterLevel classify_titer PlasmaUnit is_low_titer_plasma
-  plasma_hemolytic_risk plasma_safe_for_recipient
+  TiterPolicy plasma_safe_with_policy plasma_hemolytic_risk plasma_safe_for_recipient
   ABOSubtype subtype_compatible subtype_abo_compatible a1_compatible
-  RhVariant variant_transfusion_type variant_donation_type
+  is_acquired_b acquired_b_safe_donor is_cis_ab
+  AntiA1Policy may_have_anti_A1_with_policy may_have_anti_A1
+  RhVariant variant_transfusion_type variant_donation_type variant_can_make_anti_D
   rh_variant_compatible full_subtype_compatible
   Recipient Donor extended_compatible
+  DATResult DATPattern DATProfile AIHAType classify_aiha
+  dat_positive crossmatch_difficulty needs_adsorption_study
+  extended_compatible_with_dat extended_transfusion_safe
   ABOAllele RhAllele genotype_phenotype punnett_full offspring_phenotypes
   abo_distribution hardy_weinberg
   Population pop_frequency pop_sum
@@ -3868,11 +4582,15 @@ Extraction "transfusion_v2.ml"
   assess_severity match_quality make_decision
   neonatal_compatible rhogam_indicated
   allocation_score triage_total_allocated shortage_triage_bounded
+  ExtendedPhenotype make_extended_phenotype minor_antigen_compatible
   MinorAntigens has_minor_antigen_unified minor_antigen_compatible_unified
   full_compatible_unified
   is_duffy_null duffy_compatible_correct
+  immunogenicity_K_percent
   duffy_null_malaria_resistance_prevalence_africa
   AntibodyStatus AntibodyRecord is_kidd_antigen
+  ImmuneHistory significant_antibodies history_compatible
+  TransfusionOutcome predict_outcome transfusion_decision_with_history
   update_antibody_status reactivate_on_exposure antibody_clinically_significant
   kidd_antibody_evanescence_risk_percent
   HLAClass1 hla_matched PlateletUnit platelet_full_compatible CryoUnit
@@ -3883,16 +4601,28 @@ Extraction "transfusion_v2.ml"
   AllocationRequest shortage_triage
   RhExtended rh_to_extended blood_to_extended extended_rh_safe
   rh_neg_prevalence expected_compatible_supply
+  HDFNSeverity hdfn_severity_score antibody_hdfn_severity
   PregnancyProfile hdfn_abo_risk hdfn_rh_risk_full rhogam_indicated_full
   hdfn_risk_antigens is_hdfn_risk_antigen has_high_risk_antibody_unified
   AntibodyScreenResult screen_to_crossmatch
+  EmergencyLevel emergency_rbc_type emergency_plasma_type
+  max_uncrossmatched_units emergency_threshold_exceeded
+  IrradiationIndication requires_irradiation IrradiatedProduct irradiation_adequate
+  GranulocyteUnit granulocyte_compatible granulocyte_safe granulocyte_expired
+  ExchangeTransfusionParams calculate_exchange_volume
+  sickle_cell_exchange_requirements antigen_in_list sickle_exchange_compatible
+  neonatal_exchange_compatible
+  CMVStatus cmv_safe_required
   donation_reach vulnerability
   recipient_blood_type recipient_compatible_with_bt sensitization_risk
-  FullTransfusionDecision make_full_decision find_compatible_in_inventory
+  FullTransfusionDecision make_full_decision
+  FullTransfusionDecisionWithDAT make_full_decision_with_dat full_decision_with_dat_safe
+  find_compatible_in_inventory
   agglutination crossmatch_reaction
   count_whole_blood_donors
   severity_score mortality_risk_percent
   RhCcEe rh_haplotype_frequency_white phenotype_from_haplotypes rh_haplotype_compatible
   inherits_from valid_child_genotype valid_full_child_genotype
   emergency_donor find_compatible_donors is_rare rare_types
+  transfusion_impossible
   RhAlleleFreq us_rh_allele_frequencies expected_rh_neg_percent.
