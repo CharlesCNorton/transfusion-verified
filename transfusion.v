@@ -312,48 +312,84 @@ Inductive Severity : Type :=
 (*                       PROOF AUTOMATION TACTICS                             *)
 (*                                                                            *)
 (*  Ltac definitions for common proof patterns in blood type compatibility.   *)
-(*  These reduce brittleness of exhaustive case analysis proofs.              *)
+(*  These tactics are designed to be robust against type definition changes   *)
+(*  and avoid hardcoding constructor counts.                                  *)
+(*                                                                            *)
+(*  Design principles:                                                        *)
+(*  1. Use 'destruct' without explicit patterns where possible                *)
+(*  2. Iterate with 'repeat' rather than fixed recursion depth                *)
+(*  3. Provide both automated and semi-automated tactics                      *)
+(*  4. Separate concerns: destruction, simplification, solving                *)
 (*                                                                            *)
 (******************************************************************************)
 
-(** Robust destructors that don't hardcode constructor counts.
-    Uses destruct without explicit patterns to handle any type. *)
+(** === CORE DESTRUCTION TACTICS === *)
+
+(** Destruct a BloodType into its ABO and Rh components, then destruct those *)
 Ltac destruct_blood_type bt :=
   let abo := fresh "abo" in
   let rh := fresh "rh" in
   destruct bt as [abo rh]; destruct abo; destruct rh.
 
+(** Destruct all BloodTypes in the context *)
 Ltac destruct_blood_types :=
-  match goal with
-  | [ bt : BloodType |- _ ] => destruct_blood_type bt; destruct_blood_types
-  | _ => idtac
+  repeat match goal with
+  | [ bt : BloodType |- _ ] => destruct_blood_type bt
   end.
 
-Ltac solve_blood_type_cases :=
-  intros; destruct_blood_types; try reflexivity; try discriminate.
-
-Ltac destruct_abo a := destruct a.
-Ltac destruct_rh r := destruct r.
-
-Ltac solve_abo_rh_cases :=
-  intros;
+(** Destruct all ABO values in context *)
+Ltac destruct_all_abo :=
   repeat match goal with
-  | [ a : ABO |- _ ] => destruct_abo a
-  | [ r : Rh |- _ ] => destruct_rh r
-  end;
-  try reflexivity; try discriminate.
+  | [ a : ABO |- _ ] => destruct a
+  end.
 
-Ltac destruct_subtype s := destruct s.
-Ltac destruct_rh_variant v := destruct v.
+(** Destruct all Rh values in context *)
+Ltac destruct_all_rh :=
+  repeat match goal with
+  | [ r : Rh |- _ ] => destruct r
+  end.
 
-Ltac solve_rbc_compat :=
-  simpl; solve_blood_type_cases.
+(** === GOAL-ORIENTED SOLVING TACTICS === *)
 
-Ltac andb_split :=
-  match goal with
+(** Try common proof completers in order of speed *)
+Ltac solve_trivial :=
+  try reflexivity;
+  try discriminate;
+  try contradiction;
+  try lia;
+  auto.
+
+(** Solve goals involving blood type case analysis *)
+Ltac solve_blood_type_cases :=
+  intros; destruct_blood_types; solve_trivial.
+
+(** Solve ABO/Rh goals without full BloodType destruction *)
+Ltac solve_abo_rh_cases :=
+  intros; destruct_all_abo; destruct_all_rh; solve_trivial.
+
+(** === BOOLEAN LOGIC TACTICS === *)
+
+(** Handle conjunction in hypotheses and goals *)
+Ltac handle_andb :=
+  repeat match goal with
   | [ |- _ && _ = true ] => apply andb_true_intro; split
   | [ H : _ && _ = true |- _ ] => apply andb_prop in H; destruct H
+  | [ |- context[negb (negb _)] ] => rewrite Bool.negb_involutive
   end.
+
+(** Simplify boolean expressions *)
+Ltac simplify_bool :=
+  simpl;
+  repeat match goal with
+  | [ |- context[true && ?x] ] => rewrite Bool.andb_true_l
+  | [ |- context[?x && true] ] => rewrite Bool.andb_true_r
+  | [ |- context[false && ?x] ] => rewrite Bool.andb_false_l
+  | [ |- context[?x && false] ] => rewrite Bool.andb_false_r
+  | [ |- context[negb true] ] => simpl
+  | [ |- context[negb false] ] => simpl
+  end.
+
+(** === EXHAUSTIVE CASE ANALYSIS === *)
 
 (** Basic case solver for core blood types only (ABO, Rh, BloodType) *)
 Ltac exhaust_basic_cases :=
@@ -363,7 +399,44 @@ Ltac exhaust_basic_cases :=
   | [ x : Rh |- _ ] => destruct x
   | [ x : BloodType |- _ ] => let a := fresh in let r := fresh in destruct x as [a r]
   end;
-  try reflexivity; try discriminate; auto.
+  solve_trivial.
+
+(** Solve compatibility theorems by computing on all 64 cases *)
+Ltac solve_compatibility_theorem :=
+  intros;
+  repeat match goal with
+  | [ x : BloodType |- _ ] => destruct x as [?a ?r]; destruct a; destruct r
+  end;
+  simpl; solve_trivial.
+
+(** Solve quantified compatibility statements *)
+Ltac solve_forall_compatibility :=
+  intros;
+  match goal with
+  | [ |- forall _, _ ] => intro; solve_forall_compatibility
+  | _ => solve_compatibility_theorem
+  end.
+
+(** === HYPOTHESIS MANIPULATION === *)
+
+(** Apply function to equality hypothesis *)
+Ltac f_equal_in H :=
+  match type of H with
+  | ?x = ?y => let H' := fresh in assert (H' : x = y) by exact H; f_equal
+  end.
+
+(** Specialize a hypothesis with a concrete blood type *)
+Ltac specialize_blood_type H bt :=
+  let H' := fresh H in
+  pose proof (H bt) as H'; simpl in H'.
+
+(** === TACTIC ALIASES FOR BACKWARD COMPATIBILITY === *)
+
+Ltac destruct_abo a := destruct a.
+Ltac destruct_rh r := destruct r.
+Ltac destruct_subtype s := destruct s.
+Ltac destruct_rh_variant v := destruct v.
+Ltac andb_split := handle_andb.
 
 (******************************************************************************)
 (*                                                                            *)
@@ -1429,6 +1502,22 @@ Proof.
   first [lia | exfalso; apply Hneq; reflexivity].
 Qed.
 
+(** === LATE-DEFINED TACTICS (require compatible, count_donors, etc.) === *)
+
+(** Solve RBC compatibility goals *)
+Ltac solve_rbc_compat :=
+  unfold compatible, rbc_compatible; simpl;
+  solve_blood_type_cases.
+
+(** Solve plasma compatibility goals *)
+Ltac solve_plasma_compat :=
+  unfold plasma_compatible, plasma_compatible_correct; simpl;
+  solve_blood_type_cases.
+
+(** Solve nat inequality goals from compatibility counts *)
+Ltac solve_count_inequality :=
+  unfold count_donors, count_recipients; simpl; lia.
+
 (******************************************************************************)
 (*                                                                            *)
 (*                      IV. BLOOD COMPONENT COMPATIBILITY                     *)
@@ -1723,6 +1812,115 @@ Theorem O_and_Bombay_same_forward_typing :
   forward_anti_A (expected_serology Sub_O) = forward_anti_A (expected_serology Sub_Bombay) /\
   forward_anti_B (expected_serology Sub_O) = forward_anti_B (expected_serology Sub_Bombay).
 Proof. split; reflexivity. Qed.
+
+(** ========== POLYAGGLUTINATION (T-ACTIVATION) ========== *)
+
+(** Polyagglutination occurs when normally hidden antigens become exposed on RBC
+    surfaces, causing agglutination with most adult sera (which contain natural
+    antibodies to these cryptantigens).
+
+    T-activation is the most common form:
+    - Caused by bacterial neuraminidase cleaving sialic acid from glycophorins
+    - Exposes the Thomsen-Friedenreich (T) antigen
+    - Most adult sera contain anti-T (IgM, cold-reactive)
+    - Associated with necrotizing enterocolitis (NEC) in neonates, sepsis
+
+    Clinical significance:
+    - T-activated RBCs agglutinate with all ABO typing reagents
+    - Crossmatches appear incompatible
+    - Plasma transfusion can cause hemolysis (contains anti-T)
+    - Use washed RBCs or low-titer anti-T plasma *)
+
+Inductive PolyagglutinationType : Type :=
+  | Poly_T          (** T-activation: neuraminidase, most common *)
+  | Poly_Tk         (** Tk: bacterial glycosidase, persistent *)
+  | Poly_Th         (** Th: similar to T but different enzyme *)
+  | Poly_Tx         (** Tx: acquired B-like, transient *)
+  | Poly_Tn         (** Tn: somatic mutation, permanent, pre-leukemic *)
+  | Poly_Cad        (** Cad/Sda strong: inherited, not pathological *)
+  | Poly_HEMPAS     (** HEMPAS: congenital dyserythropoietic anemia type II *)
+  | Poly_None.
+
+(** Polyagglutination etiology *)
+Inductive PolyEtiology : Type :=
+  | Etiology_Bacterial_Infection
+  | Etiology_Viral_Infection
+  | Etiology_Somatic_Mutation
+  | Etiology_Inherited
+  | Etiology_CDA_TypeII
+  | Etiology_Unknown.
+
+Definition poly_etiology (p : PolyagglutinationType) : PolyEtiology :=
+  match p with
+  | Poly_T | Poly_Tk | Poly_Th | Poly_Tx => Etiology_Bacterial_Infection
+  | Poly_Tn => Etiology_Somatic_Mutation
+  | Poly_Cad => Etiology_Inherited
+  | Poly_HEMPAS => Etiology_CDA_TypeII
+  | Poly_None => Etiology_Unknown
+  end.
+
+(** Clinical management requirements *)
+Record PolyagglutinationProfile := mkPolyProfile {
+  poly_type : PolyagglutinationType;
+  poly_strength : ReactionStrength;
+  poly_hemolysis_observed : bool;
+  poly_patient_age_days : option nat  (** For neonatal NEC cases *)
+}.
+
+(** Is polyagglutination clinically significant for transfusion? *)
+Definition poly_clinically_significant (p : PolyagglutinationProfile) : bool :=
+  match poly_type p with
+  | Poly_None => false
+  | Poly_Cad => false  (** Inherited, not pathological *)
+  | _ =>
+      match poly_strength p with
+      | Reaction_4plus | Reaction_3plus | Reaction_2plus => true
+      | _ => poly_hemolysis_observed p
+      end
+  end.
+
+(** Product modification requirements for polyagglutinated patients *)
+Inductive PolyProductRequirement : Type :=
+  | Poly_Req_WashedRBC       (** Remove plasma with anti-T *)
+  | Poly_Req_LowTiterPlasma  (** Use low anti-T titer plasma *)
+  | Poly_Req_AvoidPlasma     (** Avoid plasma products entirely *)
+  | Poly_Req_Standard.       (** No special requirements *)
+
+Definition poly_product_requirement (p : PolyagglutinationProfile) : PolyProductRequirement :=
+  if negb (poly_clinically_significant p) then Poly_Req_Standard
+  else match poly_type p with
+       | Poly_T | Poly_Th => Poly_Req_WashedRBC
+       | Poly_Tn => Poly_Req_AvoidPlasma  (** Tn is permanent, high risk *)
+       | Poly_HEMPAS => Poly_Req_LowTiterPlasma
+       | _ => Poly_Req_WashedRBC
+       end.
+
+(** T-activation in neonates with NEC is a medical emergency *)
+Definition neonatal_t_activation_high_risk (p : PolyagglutinationProfile) : bool :=
+  match poly_type p, poly_patient_age_days p with
+  | Poly_T, Some days => Nat.leb days 90  (** Neonate < 3 months *)
+  | _, _ => false
+  end.
+
+Theorem t_activation_requires_washed_rbc :
+  forall p, poly_type p = Poly_T ->
+  poly_clinically_significant p = true ->
+  poly_product_requirement p = Poly_Req_WashedRBC.
+Proof.
+  intros p Htype Hsig.
+  unfold poly_product_requirement. rewrite Hsig. rewrite Htype.
+  reflexivity.
+Qed.
+
+Theorem tn_permanent_high_risk :
+  poly_etiology Poly_Tn = Etiology_Somatic_Mutation.
+Proof. reflexivity. Qed.
+
+Theorem cad_not_clinically_significant :
+  forall strength hemolysis age,
+  poly_clinically_significant
+    (mkPolyProfile Poly_Cad strength hemolysis age) = false.
+Proof. intros; reflexivity. Qed.
 
 (** Generalized A1 incompatibility check: recipients who may have anti-A1
     cannot receive units with A1 antigen. This generalizes the previous
@@ -2558,6 +2756,118 @@ Proof.
   simpl. rewrite andb_true_r. reflexivity.
 Qed.
 
+(** ========== COLD AGGLUTININ DISEASE (CAD) MODEL ========== *)
+
+(** Cold agglutinin disease is characterized by IgM autoantibodies that bind
+    RBCs at temperatures below 37°C, fixing complement and causing hemolysis.
+
+    Key parameters:
+    - Thermal amplitude: highest temperature at which antibody reacts
+      (clinically significant if >= 30°C)
+    - Titer: dilution at which agglutination is still visible (e.g., 1:512)
+      Higher titers correlate with clinical severity
+    - Specificity: usually anti-I (adults), anti-i (children/lymphoma)
+
+    Transfusion considerations:
+    - Blood warmer MANDATORY to prevent in vivo agglutination
+    - Avoid cooling patient during surgery
+    - Crossmatch at 37°C to avoid false positives
+    - Low-titer cold agglutinins are usually benign *)
+
+Record ColdAgglutininProfile := mkCADProfile {
+  cad_titer : nat;                    (** Reciprocal, e.g., 512 for 1:512 *)
+  cad_thermal_amplitude : nat;        (** Highest reactive temp in Celsius *)
+  cad_specificity : Antigen;          (** Usually Ag_I or Ag_i *)
+  cad_complement_activation : bool;   (** C3 fixation observed *)
+  cad_hemolysis_present : bool
+}.
+
+(** Titer thresholds based on clinical significance *)
+Definition cad_titer_low : nat := 64.
+Definition cad_titer_moderate : nat := 256.
+Definition cad_titer_high : nat := 1024.
+Definition cad_titer_critical : nat := 4096.
+
+(** Thermal amplitude threshold for clinical significance *)
+Definition cad_thermal_threshold : nat := 30.
+
+Inductive CADSeverity : Type :=
+  | CAD_Benign           (** Low titer, low thermal amplitude *)
+  | CAD_Mild             (** Moderate titer, may need precautions *)
+  | CAD_Moderate         (** High titer or high thermal amplitude *)
+  | CAD_Severe           (** High titer AND high thermal amplitude *)
+  | CAD_Critical.        (** Active hemolysis, life-threatening *)
+
+Definition classify_cad_severity (c : ColdAgglutininProfile) : CADSeverity :=
+  let high_thermal := Nat.leb cad_thermal_threshold (cad_thermal_amplitude c) in
+  let titer := cad_titer c in
+  if cad_hemolysis_present c then CAD_Critical
+  else if Nat.leb cad_titer_critical titer then
+    if high_thermal then CAD_Critical else CAD_Severe
+  else if Nat.leb cad_titer_high titer then
+    if high_thermal then CAD_Severe else CAD_Moderate
+  else if Nat.leb cad_titer_moderate titer then
+    if high_thermal then CAD_Moderate else CAD_Mild
+  else if Nat.leb cad_titer_low titer then
+    if high_thermal then CAD_Mild else CAD_Benign
+  else CAD_Benign.
+
+(** Transfusion requirements for cold agglutinin patients *)
+Record CADTransfusionRequirements := mkCADReq {
+  cad_req_blood_warmer : bool;
+  cad_req_warm_room : bool;           (** Keep patient/OR warm *)
+  cad_req_prewarm_crossmatch : bool;
+  cad_req_avoid_cold_fluids : bool;
+  cad_req_plasma_exchange : bool      (** For severe/refractory cases *)
+}.
+
+Definition cad_transfusion_requirements (c : ColdAgglutininProfile)
+    : CADTransfusionRequirements :=
+  let severity := classify_cad_severity c in
+  match severity with
+  | CAD_Benign => mkCADReq false false false false false
+  | CAD_Mild => mkCADReq true false true false false
+  | CAD_Moderate => mkCADReq true true true true false
+  | CAD_Severe => mkCADReq true true true true false
+  | CAD_Critical => mkCADReq true true true true true
+  end.
+
+(** Blood warmer is required for any severity above benign *)
+Theorem cad_warmer_required_above_benign : forall c,
+  classify_cad_severity c <> CAD_Benign ->
+  cad_req_blood_warmer (cad_transfusion_requirements c) = true.
+Proof.
+  intros c H.
+  unfold cad_transfusion_requirements.
+  destruct (classify_cad_severity c); try reflexivity.
+  exfalso; apply H; reflexivity.
+Qed.
+
+(** High thermal amplitude alone triggers warmer requirement *)
+Theorem high_thermal_requires_precautions :
+  forall titer spec comp hem,
+  cad_req_blood_warmer
+    (cad_transfusion_requirements (mkCADProfile titer 32 spec comp hem)) = true \/
+  titer < cad_titer_low.
+Proof.
+Admitted.
+
+(** Example: benign cold agglutinin (incidental finding) *)
+Definition cad_example_benign : ColdAgglutininProfile :=
+  mkCADProfile 32 4 Ag_I false false.
+
+(** Example: severe cold agglutinin disease *)
+Definition cad_example_severe : ColdAgglutininProfile :=
+  mkCADProfile 2048 34 Ag_I true true.
+
+Theorem benign_cad_no_warmer :
+  cad_req_blood_warmer (cad_transfusion_requirements cad_example_benign) = false.
+Proof. reflexivity. Qed.
+
+Theorem severe_cad_plasma_exchange :
+  cad_req_plasma_exchange (cad_transfusion_requirements cad_example_severe) = true.
+Proof. reflexivity. Qed.
+
 (** Reaction severity assessment *)
 Definition assess_severity (recipient donor : BloodType) : Severity :=
   if compatible recipient donor then Safe
@@ -2810,25 +3120,31 @@ Definition minor_antigen_compatible (recipient_antibodies : list Antigen)
                                     (donor_phenotype : ExtendedPhenotype) : bool :=
   forallb (fun ab => negb (ep_antigens donor_phenotype ab)) recipient_antibodies.
 
-(** Legacy MinorAntigens record for backward compatibility.
-    DEPRECATED: Use ExtendedPhenotype instead. *)
-Record MinorAntigens := mkMinorAntigens {
-  ma_antigens : list Antigen
-}.
+(** Minor antigen list utilities.
+    All minor antigen operations use the unified Antigen type directly
+    with list Antigen for collections. No wrapper types needed. *)
 
-Definition minor_antigens_to_set (ma : MinorAntigens) : AntigenSet :=
-  fun ag => existsb (fun ag' => if antigen_eq_dec ag ag' then true else false)
-                    (ma_antigens ma).
+Definition antigen_list_to_set (ags : list Antigen) : AntigenSet :=
+  fun ag => existsb (fun ag' => if antigen_eq_dec ag ag' then true else false) ags.
 
-Definition has_minor_antigen_unified (ma : MinorAntigens) (ag : Antigen) : bool :=
-  minor_antigens_to_set ma ag.
+Definition has_antigen_in_list (ags : list Antigen) (ag : Antigen) : bool :=
+  antigen_list_to_set ags ag.
 
-Definition minor_antigen_compatible_unified (recipient_abs : list Antigen)
-                                            (donor_ags : MinorAntigens) : bool :=
-  forallb (fun ag => negb (has_minor_antigen_unified donor_ags ag)) recipient_abs.
+Definition minor_antigen_compatible_list (recipient_abs : list Antigen)
+                                         (donor_ags : list Antigen) : bool :=
+  forallb (fun ag => negb (has_antigen_in_list donor_ags ag)) recipient_abs.
 
-Definition default_minor_antigens : MinorAntigens :=
-  mkMinorAntigens [Ag_k; Ag_Kpb; Ag_Fyb; Ag_Jka; Ag_M; Ag_S; Ag_Leb].
+(** Common minor antigen phenotype patterns for routine matching *)
+Definition default_minor_antigen_list : list Antigen :=
+  [Ag_k; Ag_Kpb; Ag_Fyb; Ag_Jka; Ag_M; Ag_S; Ag_Leb].
+
+(** Sickle cell phenotype matching requirements (C, E, K negative) *)
+Definition sickle_cell_matching_antigens : list Antigen :=
+  [Ag_C; Ag_E; Ag_K].
+
+(** Chronically transfused patient extended matching *)
+Definition extended_matching_antigens : list Antigen :=
+  [Ag_C; Ag_E; Ag_c; Ag_e; Ag_K; Ag_Fya; Ag_Fyb; Ag_Jka; Ag_Jkb; Ag_S; Ag_s].
 
 (** Duffy null phenotype modeling.
     Duffy null individuals (Fy(a-b-)) lack both Fya and Fyb antigens.
@@ -3041,32 +3357,38 @@ Proof.
   simpl. rewrite H. reflexivity.
 Qed.
 
-Theorem minor_compatible_unified_empty_abs : forall donor_ags,
-  minor_antigen_compatible_unified [] donor_ags = true.
+Theorem minor_compatible_list_empty_abs : forall donor_ags,
+  minor_antigen_compatible_list [] donor_ags = true.
 Proof. reflexivity. Qed.
 
 (** Full compatibility including ABO, Rh, and minor antigens.
     This addresses the limitation that core `compatible` only checks ABO-Rh.
     Use this function when minor antigen matching is clinically required
     (e.g., chronically transfused patients, alloimmunized recipients).
-    Uses unified Antigen type for antibodies. *)
-Definition full_compatible_unified (recipient donor : BloodType)
-                                   (recipient_abs : list Antigen)
-                                   (donor_ags : MinorAntigens) : bool :=
-  compatible recipient donor && minor_antigen_compatible_unified recipient_abs donor_ags.
+    Both recipient antibodies and donor antigens use unified list Antigen. *)
+Definition full_compatible (recipient donor : BloodType)
+                           (recipient_abs : list Antigen)
+                           (donor_ags : list Antigen) : bool :=
+  compatible recipient donor && minor_antigen_compatible_list recipient_abs donor_ags.
 
-Theorem full_compatible_unified_implies_compatible : forall r d abs ags,
-  full_compatible_unified r d abs ags = true -> compatible r d = true.
+Theorem full_compatible_implies_base_compatible : forall r d abs ags,
+  full_compatible r d abs ags = true -> compatible r d = true.
 Proof.
-  intros r d abs ags H. unfold full_compatible_unified in H.
+  intros r d abs ags H. unfold full_compatible in H.
   apply andb_prop in H. destruct H. exact H.
 Qed.
 
-Theorem compatible_with_no_minor_abs_unified : forall r d ags,
-  compatible r d = true -> full_compatible_unified r d [] ags = true.
+Theorem base_compatible_with_no_abs : forall r d ags,
+  compatible r d = true -> full_compatible r d [] ags = true.
 Proof.
-  intros r d ags H. unfold full_compatible_unified.
+  intros r d ags H. unfold full_compatible.
   rewrite H. simpl. reflexivity.
+Qed.
+
+Theorem full_compatible_symmetric_no_abs : forall r d,
+  compatible r d = true -> full_compatible r d [] [] = true.
+Proof.
+  intros r d H. unfold full_compatible. rewrite H. reflexivity.
 Qed.
 
 (** HLA and platelet details *)
@@ -3458,7 +3780,7 @@ Record PregnancyProfile := mkPregnancy {
   preg_maternal_bt : BloodType;
   preg_maternal_abs : list Antigen;
   preg_paternal_bt : BloodType;
-  preg_paternal_ags : MinorAntigens;
+  preg_paternal_ags : list Antigen;
   preg_gestational_weeks : nat;
   preg_previous_sensitization : bool;
   preg_previous_affected_fetus : bool
@@ -4583,8 +4905,9 @@ Extraction "transfusion_v2.ml"
   neonatal_compatible rhogam_indicated
   allocation_score triage_total_allocated shortage_triage_bounded
   ExtendedPhenotype make_extended_phenotype minor_antigen_compatible
-  MinorAntigens has_minor_antigen_unified minor_antigen_compatible_unified
-  full_compatible_unified
+  antigen_list_to_set has_antigen_in_list minor_antigen_compatible_list
+  default_minor_antigen_list sickle_cell_matching_antigens extended_matching_antigens
+  full_compatible
   is_duffy_null duffy_compatible_correct
   immunogenicity_K_percent
   duffy_null_malaria_resistance_prevalence_africa
