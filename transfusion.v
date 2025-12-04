@@ -1,8 +1,9 @@
 (******************************************************************************)
 (*                                                                            *)
-(*                    TRANSFUSION SAFETY — REFACTORED                         *)
+(*                         TRANSFUSION SAFETY                                 *)
 (*                                                                            *)
 (*     A Comprehensive Formalization of Blood Transfusion Compatibility       *)
+(*                                                                            *)
 (*                    "First, do no harm." — Hippocrates                      *)
 (*                                                                            *)
 (*  Author:  Charles C Norton                                                 *)
@@ -101,6 +102,53 @@ Inductive Severity : Type :=
 
 (******************************************************************************)
 (*                                                                            *)
+(*                       PROOF AUTOMATION TACTICS                             *)
+(*                                                                            *)
+(*  Ltac definitions for common proof patterns in blood type compatibility.   *)
+(*  These reduce brittleness of exhaustive case analysis proofs.              *)
+(*                                                                            *)
+(******************************************************************************)
+
+Ltac destruct_blood_type bt :=
+  destruct bt as [[| | | ] [| ]].
+
+Ltac destruct_blood_types :=
+  match goal with
+  | [ bt : BloodType |- _ ] => destruct_blood_type bt; destruct_blood_types
+  | _ => idtac
+  end.
+
+Ltac solve_blood_type_cases :=
+  intros; destruct_blood_types; try reflexivity; try discriminate.
+
+Ltac destruct_abo a := destruct a as [| | | ].
+Ltac destruct_rh r := destruct r as [| ].
+
+Ltac solve_abo_rh_cases :=
+  intros;
+  repeat match goal with
+  | [ a : ABO |- _ ] => destruct_abo a
+  | [ r : Rh |- _ ] => destruct_rh r
+  end;
+  try reflexivity; try discriminate.
+
+Ltac destruct_subtype s :=
+  destruct s as [| | | | | | | | ].
+
+Ltac destruct_rh_variant v :=
+  destruct v as [| | | | | | | | | | ].
+
+Ltac solve_rbc_compat :=
+  simpl; solve_blood_type_cases.
+
+Ltac andb_split :=
+  match goal with
+  | [ |- _ && _ = true ] => apply andb_true_intro; split
+  | [ H : _ && _ = true |- _ ] => apply andb_prop in H; destruct H
+  end.
+
+(******************************************************************************)
+(*                                                                            *)
 (*                      II. IMMUNOLOGICAL MODEL                               *)
 (*                                                                            *)
 (*  Core principle: A transfusion is safe iff donor cells carry no antigens   *)
@@ -174,6 +222,91 @@ Definition plasma_compatible (recipient donor : BloodType) : bool :=
 Definition plasma_compatible_rationale : Prop :=
   forall r d, plasma_compatible r d = true <->
     (forall ag, has_antibody d ag = true -> has_antigen r ag = false).
+
+(** ABO Titer Modeling for Plasma Transfusion Risk Assessment.
+    Titers are expressed as reciprocals (e.g., titer 64 means 1:64 dilution).
+    High-titer plasma (>256 for anti-A, >128 for anti-B) poses increased
+    risk of hemolytic reactions when transfused to incompatible recipients.
+
+    Clinical context: O plasma donors often have higher titers of anti-A
+    and anti-B. "Low-titer O" plasma (titer ≤ 50) is preferred for
+    emergency release to non-O recipients. *)
+Inductive TiterLevel : Type :=
+  | Titer_Low
+  | Titer_Moderate
+  | Titer_High
+  | Titer_Critical.
+
+Definition titer_threshold_anti_A : nat := 256.
+Definition titer_threshold_anti_B : nat := 128.
+Definition low_titer_threshold : nat := 50.
+
+Definition classify_titer (value : nat) : TiterLevel :=
+  if Nat.leb value 50 then Titer_Low
+  else if Nat.leb value 128 then Titer_Moderate
+  else if Nat.leb value 256 then Titer_High
+  else Titer_Critical.
+
+Record PlasmaUnit := mkPlasmaUnit {
+  plasma_abo : ABO;
+  plasma_rh : Rh;
+  plasma_anti_A_titer : nat;
+  plasma_anti_B_titer : nat;
+  plasma_volume_ml : nat
+}.
+
+Definition is_low_titer_plasma (p : PlasmaUnit) : bool :=
+  Nat.leb (plasma_anti_A_titer p) low_titer_threshold &&
+  Nat.leb (plasma_anti_B_titer p) low_titer_threshold.
+
+Definition plasma_hemolytic_risk (recipient_abo : ABO) (p : PlasmaUnit) : TiterLevel :=
+  match recipient_abo, plasma_abo p with
+  | A, O => classify_titer (plasma_anti_A_titer p)
+  | B, O => classify_titer (plasma_anti_B_titer p)
+  | AB, O =>
+      let risk_A := classify_titer (plasma_anti_A_titer p) in
+      let risk_B := classify_titer (plasma_anti_B_titer p) in
+      match risk_A, risk_B with
+      | Titer_Critical, _ => Titer_Critical
+      | _, Titer_Critical => Titer_Critical
+      | Titer_High, _ => Titer_High
+      | _, Titer_High => Titer_High
+      | Titer_Moderate, _ => Titer_Moderate
+      | _, Titer_Moderate => Titer_Moderate
+      | _, _ => Titer_Low
+      end
+  | A, B => classify_titer (plasma_anti_A_titer p)
+  | B, A => classify_titer (plasma_anti_B_titer p)
+  | _, _ => Titer_Low
+  end.
+
+Definition plasma_safe_for_recipient (recipient_abo : ABO) (p : PlasmaUnit) : bool :=
+  match plasma_hemolytic_risk recipient_abo p with
+  | Titer_Low => true
+  | Titer_Moderate => true
+  | Titer_High => false
+  | Titer_Critical => false
+  end.
+
+Theorem AB_plasma_no_titer_risk : forall r titer_A titer_B vol rh,
+  let p := mkPlasmaUnit AB rh titer_A titer_B vol in
+  plasma_hemolytic_risk r p = Titer_Low.
+Proof. intros [| | | ]; reflexivity. Qed.
+
+Theorem low_titer_O_safe_for_A : forall titer_A titer_B vol rh,
+  titer_A <= 50 -> titer_B <= 50 ->
+  let p := mkPlasmaUnit O rh titer_A titer_B vol in
+  plasma_safe_for_recipient A p = true.
+Proof.
+  intros titer_A titer_B vol rh Ha Hb.
+  unfold plasma_safe_for_recipient, plasma_hemolytic_risk, classify_titer.
+  simpl. apply Nat.leb_le in Ha. rewrite Ha. reflexivity.
+Qed.
+
+Theorem high_titer_O_risky_for_A : forall titer_B vol rh,
+  let p := mkPlasmaUnit O rh 300 titer_B vol in
+  plasma_safe_for_recipient A p = false.
+Proof. reflexivity. Qed.
 
 (** Whole blood requires both RBC and plasma compatibility *)
 Definition whole_blood_compatible (recipient donor : BloodType) : bool :=
@@ -1134,6 +1267,85 @@ Theorem kidd_antibodies_frequently_evanescent :
   kidd_antibody_evanescence_risk_percent >= 30.
 Proof. unfold kidd_antibody_evanescence_risk_percent; lia. Qed.
 
+(** Kidd antibody evanescence modeling for sensitization tracking.
+    These antibodies can fall below detection threshold and reappear on re-exposure,
+    causing delayed hemolytic transfusion reactions (DHTR). *)
+Inductive AntibodyStatus : Type :=
+  | Detectable
+  | Evanescent
+  | Historical.
+
+Record AntibodyRecord := mkAntibodyRecord {
+  ab_antigen : Antigen;
+  ab_status : AntibodyStatus;
+  ab_months_since_detection : nat;
+  ab_exposure_count : nat
+}.
+
+Definition is_kidd_antigen (ag : Antigen) : bool :=
+  match ag with Ag_Jka | Ag_Jkb => true | _ => false end.
+
+Definition kidd_evanescence_months : nat := 6.
+
+Definition update_antibody_status (ab : AntibodyRecord) (months_elapsed : nat)
+    : AntibodyRecord :=
+  let new_months := ab_months_since_detection ab + months_elapsed in
+  if is_kidd_antigen (ab_antigen ab) then
+    match ab_status ab with
+    | Detectable =>
+        if Nat.leb kidd_evanescence_months new_months then
+          mkAntibodyRecord (ab_antigen ab) Evanescent new_months (ab_exposure_count ab)
+        else
+          mkAntibodyRecord (ab_antigen ab) Detectable new_months (ab_exposure_count ab)
+    | Evanescent =>
+        mkAntibodyRecord (ab_antigen ab) Historical new_months (ab_exposure_count ab)
+    | Historical => ab
+    end
+  else ab.
+
+Definition reactivate_on_exposure (ab : AntibodyRecord) : AntibodyRecord :=
+  match ab_status ab with
+  | Evanescent | Historical =>
+      mkAntibodyRecord (ab_antigen ab) Detectable 0 (S (ab_exposure_count ab))
+  | Detectable =>
+      mkAntibodyRecord (ab_antigen ab) Detectable 0 (S (ab_exposure_count ab))
+  end.
+
+Definition antibody_clinically_significant (ab : AntibodyRecord) : bool :=
+  match ab_status ab with
+  | Detectable => true
+  | Evanescent => true
+  | Historical => is_kidd_antigen (ab_antigen ab)
+  end.
+
+Theorem kidd_always_significant : forall ab,
+  is_kidd_antigen (ab_antigen ab) = true ->
+  antibody_clinically_significant ab = true.
+Proof.
+  intros ab Hkidd.
+  unfold antibody_clinically_significant.
+  destruct (ab_status ab); try reflexivity.
+  exact Hkidd.
+Qed.
+
+Theorem evanescent_becomes_historical : forall ab months,
+  ab_status ab = Evanescent ->
+  is_kidd_antigen (ab_antigen ab) = true ->
+  months > 0 ->
+  ab_status (update_antibody_status ab months) = Historical.
+Proof.
+  intros ab months Hev Hkidd Hmonths.
+  unfold update_antibody_status.
+  rewrite Hkidd. rewrite Hev. reflexivity.
+Qed.
+
+Theorem reactivation_makes_detectable : forall ab,
+  ab_status (reactivate_on_exposure ab) = Detectable.
+Proof.
+  intros ab. unfold reactivate_on_exposure.
+  destruct (ab_status ab); reflexivity.
+Qed.
+
 Theorem minor_compatible_unified_empty_abs : forall donor_ags,
   minor_antigen_compatible_unified [] donor_ags = true.
 Proof. reflexivity. Qed.
@@ -1435,23 +1647,19 @@ Proof.
   intros. rewrite <- list_sum_fold_equiv. apply allocate_aux_bounded_direct.
 Qed.
 
-Lemma shortage_triage_eq_allocate_aux : forall reqs available,
-  shortage_triage reqs available = allocate_aux reqs available.
-Proof.
-  intros reqs available.
-  unfold shortage_triage.
-  induction reqs as [| r rest IH] in available |- *; simpl.
-  - reflexivity.
-  - f_equal. apply IH.
-Qed.
-
 Theorem shortage_triage_bounded : forall reqs available,
   triage_total_allocated (shortage_triage reqs available) <= available.
 Proof.
   intros reqs available.
-  unfold triage_total_allocated.
-  rewrite shortage_triage_eq_allocate_aux.
-  apply allocate_aux_bounded.
+  unfold triage_total_allocated, shortage_triage.
+  rewrite <- list_sum_fold_equiv.
+  generalize available. clear available.
+  induction reqs as [| r rest IH]; intro available; simpl.
+  - lia.
+  - set (give := Nat.min (req_units_needed r) available).
+    assert (Hgive: give <= available) by apply Nat.le_min_r.
+    specialize (IH (available - give)).
+    lia.
 Qed.
 
 (** Extended Rh model with weak-D *)
@@ -2241,6 +2449,8 @@ Extraction "transfusion_v2.ml"
   compatible_dec plasma_compatible_dec whole_blood_compatible_dec
   all_blood_types count_donors count_recipients
   is_abo_rh_antigen is_minor_antigen
+  TiterLevel classify_titer PlasmaUnit is_low_titer_plasma
+  plasma_hemolytic_risk plasma_safe_for_recipient
   ABOSubtype subtype_compatible subtype_abo_compatible a1_compatible
   RhVariant variant_transfusion_type variant_donation_type
   rh_variant_compatible full_subtype_compatible
@@ -2252,11 +2462,13 @@ Extraction "transfusion_v2.ml"
   LabTest test_time_minutes
   assess_severity match_quality make_decision
   neonatal_compatible rhogam_indicated
-  allocation_score
+  allocation_score triage_total_allocated shortage_triage_bounded
   MinorAntigens has_minor_antigen_unified minor_antigen_compatible_unified
   full_compatible_unified
   is_duffy_null duffy_compatible
   duffy_null_malaria_resistance_prevalence_africa
+  AntibodyStatus AntibodyRecord is_kidd_antigen
+  update_antibody_status reactivate_on_exposure antibody_clinically_significant
   kidd_antibody_evanescence_risk_percent
   HLAClass1 hla_matched PlateletUnit platelet_full_compatible CryoUnit
   estimated_blood_volume massive_transfusion_protocol_ratio
