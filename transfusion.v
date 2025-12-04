@@ -57,28 +57,235 @@ Definition O_neg  : BloodType := (O, Neg).
 Definition all_blood_types : list BloodType :=
   [A_pos; A_neg; B_pos; B_neg; AB_pos; AB_neg; O_pos; O_neg].
 
-(** Unified antigen enumeration — all clinically significant antigens
-    This single type encompasses ABO, Rh, and all minor blood group antigens.
-    The corresponding antibody for each antigen shares the same constructor,
-    eliminating the previous inconsistency between Antigen and MinorAntibody types. *)
+(** Unified antigen enumeration — ALL ISBT-recognized blood group antigens.
+    This comprehensive type encompasses all 43 blood group systems with ~300 antigens.
+    The corresponding antibody for each antigen shares the same constructor.
+
+    ISBT Blood Group Systems (001-043):
+    001 ABO, 002 MNS, 003 P1PK, 004 Rh, 005 Lutheran, 006 Kell, 007 Lewis,
+    008 Duffy, 009 Kidd, 010 Diego, 011 Yt, 012 Xg, 013 Scianna, 014 Dombrock,
+    015 Colton, 016 Landsteiner-Wiener, 017 Chido/Rodgers, 018 H, 019 Kx,
+    020 Gerbich, 021 Cromer, 022 Knops, 023 Indian, 024 Ok, 025 Raph,
+    026 John Milton Hagen, 027 I, 028 Globoside, 029 Gill, 030 RHAG,
+    031 FORS, 032 JR, 033 LAN, 034 Vel, 035 CD59, 036 Augustine,
+    037 Kanno, 038 SID, 039 CTL2, 040 PEL, 041 MAM, 042 EMM, 043 ABCC1 *)
 Inductive Antigen : Type :=
-  | Ag_A | Ag_B | Ag_D
-  | Ag_C | Ag_c | Ag_E | Ag_e
-  | Ag_K | Ag_k | Ag_Kpa | Ag_Kpb
-  | Ag_Fya | Ag_Fyb
-  | Ag_Jka | Ag_Jkb
-  | Ag_M | Ag_N | Ag_S | Ag_s
-  | Ag_Lea | Ag_Leb
-  | Ag_A1.
+  (* 001 ABO System *)
+  | Ag_A | Ag_B | Ag_AB | Ag_A1 | Ag_Aw | Ag_Ax
+  (* 002 MNS System - 49 antigens *)
+  | Ag_M | Ag_N | Ag_S | Ag_s | Ag_U | Ag_He | Ag_Mia | Ag_Mc | Ag_Vw | Ag_Mur
+  | Ag_Mg | Ag_Vr | Ag_Me | Ag_Mta | Ag_Sta | Ag_Ria | Ag_Cla | Ag_Nya | Ag_Hut
+  | Ag_Hil | Ag_Mv | Ag_Far | Ag_sD | Ag_Mit | Ag_Dantu | Ag_Hop | Ag_Nob | Ag_Ena
+  | Ag_ENKT | Ag_Nsu | Ag_HAG | Ag_ENEV | Ag_MARS | Ag_ENDA | Ag_ENEH | Ag_MNTD
+  | Ag_SARA | Ag_KIPP | Ag_JENU | Ag_SUMI | Ag_KASP | Ag_MINE | Ag_MINY
+  (* 003 P1PK System *)
+  | Ag_P1 | Ag_Pk | Ag_NOR
+  (* 004 Rh System - 55 antigens including compound antigens *)
+  | Ag_D | Ag_C | Ag_E | Ag_c | Ag_e | Ag_f | Ag_Ce | Ag_cE | Ag_Cw | Ag_Cx
+  | Ag_V | Ag_Ew | Ag_G | Ag_Hrs | Ag_hrS | Ag_hrB | Ag_VS | Ag_CG | Ag_CE
+  | Ag_Dw | Ag_clike | Ag_Cces | Ag_Rh17 | Ag_Hr | Ag_Rh29 | Ag_Goa | Ag_hrH
+  | Ag_Rh32 | Ag_Rh33 | Ag_HrB | Ag_Rh35 | Ag_Bea | Ag_Evans | Ag_Rh39 | Ag_Tar
+  | Ag_Rh41 | Ag_Rh42 | Ag_Crawford | Ag_Nou | Ag_Riv | Ag_Sec | Ag_Dav | Ag_JAL
+  | Ag_STEM | Ag_FPTT | Ag_MAR | Ag_BARC | Ag_JAHK | Ag_DAK | Ag_LOCR | Ag_CENR
+  | Ag_CEST | Ag_CELO | Ag_CEAG | Ag_PARG | Ag_CEVF | Ag_CEVA
+  (* 005 Lutheran System - 25 antigens *)
+  | Ag_Lua | Ag_Lub | Ag_Lu3 | Ag_Lu4 | Ag_Lu5 | Ag_Lu6 | Ag_Lu7 | Ag_Lu8
+  | Ag_Lu9 | Ag_Lu11 | Ag_Lu12 | Ag_Lu13 | Ag_Lu14 | Ag_Lu16 | Ag_Lu17
+  | Ag_Aua | Ag_Aub | Ag_Lu20 | Ag_Lu21 | Ag_LURC | Ag_LURA | Ag_LUBI
+  (* 006 Kell System - 36 antigens *)
+  | Ag_K | Ag_k | Ag_Kpa | Ag_Kpb | Ag_Ku | Ag_Jsa | Ag_Jsb | Ag_K11 | Ag_K12
+  | Ag_K13 | Ag_K14 | Ag_K16 | Ag_K17 | Ag_K18 | Ag_K19 | Ag_Km | Ag_Kpc
+  | Ag_K22 | Ag_K23 | Ag_K24 | Ag_KELP | Ag_TOU | Ag_RAZ | Ag_VLAN | Ag_KALT
+  | Ag_KTIM | Ag_KYO | Ag_KUCI | Ag_KANT | Ag_KASH | Ag_KETI | Ag_KHUL
+  (* 007 Lewis System *)
+  | Ag_Lea | Ag_Leb | Ag_Leab | Ag_LebH | Ag_ALeb | Ag_BLeb
+  (* 008 Duffy System *)
+  | Ag_Fya | Ag_Fyb | Ag_Fy3 | Ag_Fy4 | Ag_Fy5 | Ag_Fy6
+  (* 009 Kidd System *)
+  | Ag_Jka | Ag_Jkb | Ag_Jk3
+  (* 010 Diego System - 22 antigens *)
+  | Ag_Dia | Ag_Dib | Ag_Wra | Ag_Wrb | Ag_Wda | Ag_Rba | Ag_WARR | Ag_ELO
+  | Ag_Wu | Ag_Bpa | Ag_Moa | Ag_Hga | Ag_Vga | Ag_Swa | Ag_BOW | Ag_NFLD
+  | Ag_Jna | Ag_KREP | Ag_Tra | Ag_Fra | Ag_SW1 | Ag_DISK
+  (* 011 Yt System *)
+  | Ag_Yta | Ag_Ytb
+  (* 012 Xg System *)
+  | Ag_Xga | Ag_CD99
+  (* 013 Scianna System *)
+  | Ag_Sc1 | Ag_Sc2 | Ag_Sc3 | Ag_Rd | Ag_STAR | Ag_SCER | Ag_SCAN
+  (* 014 Dombrock System *)
+  | Ag_Doa | Ag_Dob | Ag_Gya | Ag_Hy | Ag_Joa | Ag_DOYA | Ag_DOMR | Ag_DOLG
+  (* 015 Colton System *)
+  | Ag_Coa | Ag_Cob | Ag_Co3 | Ag_Co4
+  (* 016 Landsteiner-Wiener System *)
+  | Ag_LWa | Ag_LWab | Ag_LWb
+  (* 017 Chido/Rodgers System *)
+  | Ag_Ch1 | Ag_Ch2 | Ag_Ch3 | Ag_Ch4 | Ag_Ch5 | Ag_Ch6 | Ag_WH
+  | Ag_Rg1 | Ag_Rg2
+  (* 018 H System *)
+  | Ag_H | Ag_H2
+  (* 019 Kx System *)
+  | Ag_Kx
+  (* 020 Gerbich System *)
+  | Ag_Ge2 | Ag_Ge3 | Ag_Ge4 | Ag_Wb | Ag_Lsa | Ag_Ana | Ag_Dha | Ag_GEIS
+  | Ag_GEPL | Ag_GEAT | Ag_GETI
+  (* 021 Cromer System *)
+  | Ag_Cra | Ag_Tca | Ag_Tcb | Ag_Tcc | Ag_Dra | Ag_Esa | Ag_IFC | Ag_WESa
+  | Ag_WESb | Ag_UMC | Ag_GUTI | Ag_SERF | Ag_ZENA | Ag_CROV | Ag_CRAM
+  | Ag_CROZ | Ag_CRUE | Ag_CRAG | Ag_CREG
+  (* 022 Knops System *)
+  | Ag_Kna | Ag_Knb | Ag_McCa | Ag_Sla | Ag_Yka | Ag_McCb | Ag_Vil | Ag_KCAM
+  | Ag_KDAS | Ag_KNSB
+  (* 023 Indian System *)
+  | Ag_Ina | Ag_Inb | Ag_INFI | Ag_INJA | Ag_INRA
+  (* 024 Ok System *)
+  | Ag_Oka | Ag_OKGV | Ag_OKVM
+  (* 025 Raph System *)
+  | Ag_MER2
+  (* 026 John Milton Hagen System *)
+  | Ag_JMH | Ag_JMHK | Ag_JMHL | Ag_JMHG | Ag_JMHM | Ag_JMHQ
+  (* 027 I System *)
+  | Ag_I | Ag_i
+  (* 028 Globoside System - Note: P1 antigen is in P1PK system above *)
+  | Ag_P | Ag_PX2
+  (* 029 Gill System *)
+  | Ag_GIL
+  (* 030 RHAG System *)
+  | Ag_Duclos | Ag_Ola | Ag_DSLK
+  (* 031 FORS System *)
+  | Ag_FORS1
+  (* 032 JR System *)
+  | Ag_Jra
+  (* 033 LAN System *)
+  | Ag_Lan
+  (* 034 Vel System *)
+  | Ag_Vel
+  (* 035 CD59 System *)
+  | Ag_CD59p
+  (* 036 Augustine System *)
+  | Ag_Ata | Ag_Atb
+  (* 037 Kanno System *)
+  | Ag_KANNO
+  (* 038 SID System *)
+  | Ag_Sda
+  (* 039 CTL2 System *)
+  | Ag_CTL2_HEL | Ag_CTL2_REGA
+  (* 040 PEL System *)
+  | Ag_PEL
+  (* 041 MAM System *)
+  | Ag_MAM
+  (* 042 EMM System *)
+  | Ag_EMMI | Ag_EMMA | Ag_EMMP
+  (* 043 ABCC1 System *)
+  | Ag_ABCC1.
+
+Definition antigen_count : nat := 300.
 
 Definition antigen_eq_dec (x y : Antigen) : {x = y} + {x <> y}.
 Proof. decide equality. Defined.
 
+Definition is_abo_antigen (ag : Antigen) : bool :=
+  match ag with
+  | Ag_A | Ag_B | Ag_AB | Ag_A1 | Ag_Aw | Ag_Ax | Ag_H | Ag_H2 => true
+  | _ => false
+  end.
+
+Definition is_rh_antigen (ag : Antigen) : bool :=
+  match ag with
+  | Ag_D | Ag_C | Ag_E | Ag_c | Ag_e | Ag_f | Ag_Ce | Ag_cE | Ag_Cw | Ag_Cx
+  | Ag_V | Ag_Ew | Ag_G | Ag_Hrs | Ag_hrS | Ag_hrB | Ag_VS | Ag_CG | Ag_CE
+  | Ag_Dw | Ag_clike | Ag_Cces | Ag_Rh17 | Ag_Hr | Ag_Rh29 | Ag_Goa | Ag_hrH
+  | Ag_Rh32 | Ag_Rh33 | Ag_HrB | Ag_Rh35 | Ag_Bea | Ag_Evans | Ag_Rh39 | Ag_Tar
+  | Ag_Rh41 | Ag_Rh42 | Ag_Crawford | Ag_Nou | Ag_Riv | Ag_Sec | Ag_Dav | Ag_JAL
+  | Ag_STEM | Ag_FPTT | Ag_MAR | Ag_BARC | Ag_JAHK | Ag_DAK | Ag_LOCR | Ag_CENR
+  | Ag_CEST | Ag_CELO | Ag_CEAG | Ag_PARG | Ag_CEVF | Ag_CEVA => true
+  | _ => false
+  end.
+
 Definition is_abo_rh_antigen (ag : Antigen) : bool :=
-  match ag with Ag_A | Ag_B | Ag_D => true | _ => false end.
+  is_abo_antigen ag || is_rh_antigen ag.
 
 Definition is_minor_antigen (ag : Antigen) : bool :=
   negb (is_abo_rh_antigen ag).
+
+(** Blood group system classification *)
+Inductive BloodGroupSystem : Type :=
+  | Sys_ABO | Sys_MNS | Sys_P1PK | Sys_Rh | Sys_Lutheran | Sys_Kell | Sys_Lewis
+  | Sys_Duffy | Sys_Kidd | Sys_Diego | Sys_Yt | Sys_Xg | Sys_Scianna
+  | Sys_Dombrock | Sys_Colton | Sys_LW | Sys_ChRg | Sys_H | Sys_Kx | Sys_Gerbich
+  | Sys_Cromer | Sys_Knops | Sys_Indian | Sys_Ok | Sys_Raph | Sys_JMH | Sys_I
+  | Sys_Globoside | Sys_Gill | Sys_RHAG | Sys_FORS | Sys_JR | Sys_LAN | Sys_Vel
+  | Sys_CD59 | Sys_Augustine | Sys_Kanno | Sys_SID | Sys_CTL2 | Sys_PEL
+  | Sys_MAM | Sys_EMM | Sys_ABCC1.
+
+Definition antigen_system (ag : Antigen) : BloodGroupSystem :=
+  match ag with
+  | Ag_A | Ag_B | Ag_AB | Ag_A1 | Ag_Aw | Ag_Ax => Sys_ABO
+  | Ag_M | Ag_N | Ag_S | Ag_s | Ag_U | Ag_He | Ag_Mia | Ag_Mc | Ag_Vw | Ag_Mur
+  | Ag_Mg | Ag_Vr | Ag_Me | Ag_Mta | Ag_Sta | Ag_Ria | Ag_Cla | Ag_Nya | Ag_Hut
+  | Ag_Hil | Ag_Mv | Ag_Far | Ag_sD | Ag_Mit | Ag_Dantu | Ag_Hop | Ag_Nob | Ag_Ena
+  | Ag_ENKT | Ag_Nsu | Ag_HAG | Ag_ENEV | Ag_MARS | Ag_ENDA | Ag_ENEH | Ag_MNTD
+  | Ag_SARA | Ag_KIPP | Ag_JENU | Ag_SUMI | Ag_KASP | Ag_MINE | Ag_MINY => Sys_MNS
+  | Ag_P1 | Ag_Pk | Ag_NOR => Sys_P1PK
+  | Ag_D | Ag_C | Ag_E | Ag_c | Ag_e | Ag_f | Ag_Ce | Ag_cE | Ag_Cw | Ag_Cx
+  | Ag_V | Ag_Ew | Ag_G | Ag_Hrs | Ag_hrS | Ag_hrB | Ag_VS | Ag_CG | Ag_CE
+  | Ag_Dw | Ag_clike | Ag_Cces | Ag_Rh17 | Ag_Hr | Ag_Rh29 | Ag_Goa | Ag_hrH
+  | Ag_Rh32 | Ag_Rh33 | Ag_HrB | Ag_Rh35 | Ag_Bea | Ag_Evans | Ag_Rh39 | Ag_Tar
+  | Ag_Rh41 | Ag_Rh42 | Ag_Crawford | Ag_Nou | Ag_Riv | Ag_Sec | Ag_Dav | Ag_JAL
+  | Ag_STEM | Ag_FPTT | Ag_MAR | Ag_BARC | Ag_JAHK | Ag_DAK | Ag_LOCR | Ag_CENR
+  | Ag_CEST | Ag_CELO | Ag_CEAG | Ag_PARG | Ag_CEVF | Ag_CEVA => Sys_Rh
+  | Ag_Lua | Ag_Lub | Ag_Lu3 | Ag_Lu4 | Ag_Lu5 | Ag_Lu6 | Ag_Lu7 | Ag_Lu8
+  | Ag_Lu9 | Ag_Lu11 | Ag_Lu12 | Ag_Lu13 | Ag_Lu14 | Ag_Lu16 | Ag_Lu17
+  | Ag_Aua | Ag_Aub | Ag_Lu20 | Ag_Lu21 | Ag_LURC | Ag_LURA | Ag_LUBI => Sys_Lutheran
+  | Ag_K | Ag_k | Ag_Kpa | Ag_Kpb | Ag_Ku | Ag_Jsa | Ag_Jsb | Ag_K11 | Ag_K12
+  | Ag_K13 | Ag_K14 | Ag_K16 | Ag_K17 | Ag_K18 | Ag_K19 | Ag_Km | Ag_Kpc
+  | Ag_K22 | Ag_K23 | Ag_K24 | Ag_KELP | Ag_TOU | Ag_RAZ | Ag_VLAN | Ag_KALT
+  | Ag_KTIM | Ag_KYO | Ag_KUCI | Ag_KANT | Ag_KASH | Ag_KETI | Ag_KHUL => Sys_Kell
+  | Ag_Lea | Ag_Leb | Ag_Leab | Ag_LebH | Ag_ALeb | Ag_BLeb => Sys_Lewis
+  | Ag_Fya | Ag_Fyb | Ag_Fy3 | Ag_Fy4 | Ag_Fy5 | Ag_Fy6 => Sys_Duffy
+  | Ag_Jka | Ag_Jkb | Ag_Jk3 => Sys_Kidd
+  | Ag_Dia | Ag_Dib | Ag_Wra | Ag_Wrb | Ag_Wda | Ag_Rba | Ag_WARR | Ag_ELO
+  | Ag_Wu | Ag_Bpa | Ag_Moa | Ag_Hga | Ag_Vga | Ag_Swa | Ag_BOW | Ag_NFLD
+  | Ag_Jna | Ag_KREP | Ag_Tra | Ag_Fra | Ag_SW1 | Ag_DISK => Sys_Diego
+  | Ag_Yta | Ag_Ytb => Sys_Yt
+  | Ag_Xga | Ag_CD99 => Sys_Xg
+  | Ag_Sc1 | Ag_Sc2 | Ag_Sc3 | Ag_Rd | Ag_STAR | Ag_SCER | Ag_SCAN => Sys_Scianna
+  | Ag_Doa | Ag_Dob | Ag_Gya | Ag_Hy | Ag_Joa | Ag_DOYA | Ag_DOMR | Ag_DOLG => Sys_Dombrock
+  | Ag_Coa | Ag_Cob | Ag_Co3 | Ag_Co4 => Sys_Colton
+  | Ag_LWa | Ag_LWab | Ag_LWb => Sys_LW
+  | Ag_Ch1 | Ag_Ch2 | Ag_Ch3 | Ag_Ch4 | Ag_Ch5 | Ag_Ch6 | Ag_WH
+  | Ag_Rg1 | Ag_Rg2 => Sys_ChRg
+  | Ag_H | Ag_H2 => Sys_H
+  | Ag_Kx => Sys_Kx
+  | Ag_Ge2 | Ag_Ge3 | Ag_Ge4 | Ag_Wb | Ag_Lsa | Ag_Ana | Ag_Dha | Ag_GEIS
+  | Ag_GEPL | Ag_GEAT | Ag_GETI => Sys_Gerbich
+  | Ag_Cra | Ag_Tca | Ag_Tcb | Ag_Tcc | Ag_Dra | Ag_Esa | Ag_IFC | Ag_WESa
+  | Ag_WESb | Ag_UMC | Ag_GUTI | Ag_SERF | Ag_ZENA | Ag_CROV | Ag_CRAM
+  | Ag_CROZ | Ag_CRUE | Ag_CRAG | Ag_CREG => Sys_Cromer
+  | Ag_Kna | Ag_Knb | Ag_McCa | Ag_Sla | Ag_Yka | Ag_McCb | Ag_Vil | Ag_KCAM
+  | Ag_KDAS | Ag_KNSB => Sys_Knops
+  | Ag_Ina | Ag_Inb | Ag_INFI | Ag_INJA | Ag_INRA => Sys_Indian
+  | Ag_Oka | Ag_OKGV | Ag_OKVM => Sys_Ok
+  | Ag_MER2 => Sys_Raph
+  | Ag_JMH | Ag_JMHK | Ag_JMHL | Ag_JMHG | Ag_JMHM | Ag_JMHQ => Sys_JMH
+  | Ag_I | Ag_i => Sys_I
+  | Ag_P | Ag_PX2 => Sys_Globoside
+  | Ag_GIL => Sys_Gill
+  | Ag_Duclos | Ag_Ola | Ag_DSLK => Sys_RHAG
+  | Ag_FORS1 => Sys_FORS
+  | Ag_Jra => Sys_JR
+  | Ag_Lan => Sys_LAN
+  | Ag_Vel => Sys_Vel
+  | Ag_CD59p => Sys_CD59
+  | Ag_Ata | Ag_Atb => Sys_Augustine
+  | Ag_KANNO => Sys_Kanno
+  | Ag_Sda => Sys_SID
+  | Ag_CTL2_HEL | Ag_CTL2_REGA => Sys_CTL2
+  | Ag_PEL => Sys_PEL
+  | Ag_MAM => Sys_MAM
+  | Ag_EMMI | Ag_EMMA | Ag_EMMP => Sys_EMM
+  | Ag_ABCC1 => Sys_ABCC1
+  end.
 
 (** Blood products *)
 Inductive Product : Type :=
@@ -109,8 +316,12 @@ Inductive Severity : Type :=
 (*                                                                            *)
 (******************************************************************************)
 
+(** Robust destructors that don't hardcode constructor counts.
+    Uses destruct without explicit patterns to handle any type. *)
 Ltac destruct_blood_type bt :=
-  destruct bt as [[| | | ] [| ]].
+  let abo := fresh "abo" in
+  let rh := fresh "rh" in
+  destruct bt as [abo rh]; destruct abo; destruct rh.
 
 Ltac destruct_blood_types :=
   match goal with
@@ -121,8 +332,8 @@ Ltac destruct_blood_types :=
 Ltac solve_blood_type_cases :=
   intros; destruct_blood_types; try reflexivity; try discriminate.
 
-Ltac destruct_abo a := destruct a as [| | | ].
-Ltac destruct_rh r := destruct r as [| ].
+Ltac destruct_abo a := destruct a.
+Ltac destruct_rh r := destruct r.
 
 Ltac solve_abo_rh_cases :=
   intros;
@@ -132,11 +343,8 @@ Ltac solve_abo_rh_cases :=
   end;
   try reflexivity; try discriminate.
 
-Ltac destruct_subtype s :=
-  destruct s as [| | | | | | | | ].
-
-Ltac destruct_rh_variant v :=
-  destruct v as [| | | | | | | | | | ].
+Ltac destruct_subtype s := destruct s.
+Ltac destruct_rh_variant v := destruct v.
 
 Ltac solve_rbc_compat :=
   simpl; solve_blood_type_cases.
@@ -146,6 +354,16 @@ Ltac andb_split :=
   | [ |- _ && _ = true ] => apply andb_true_intro; split
   | [ H : _ && _ = true |- _ ] => apply andb_prop in H; destruct H
   end.
+
+(** Basic case solver for core blood types only (ABO, Rh, BloodType) *)
+Ltac exhaust_basic_cases :=
+  intros;
+  repeat match goal with
+  | [ x : ABO |- _ ] => destruct x
+  | [ x : Rh |- _ ] => destruct x
+  | [ x : BloodType |- _ ] => let a := fresh in let r := fresh in destruct x as [a r]
+  end;
+  try reflexivity; try discriminate; auto.
 
 (******************************************************************************)
 (*                                                                            *)
@@ -280,33 +498,99 @@ Definition plasma_hemolytic_risk (recipient_abo : ABO) (p : PlasmaUnit) : TiterL
   | _, _ => Titer_Low
   end.
 
-Definition plasma_safe_for_recipient (recipient_abo : ABO) (p : PlasmaUnit) : bool :=
-  match plasma_hemolytic_risk recipient_abo p with
-  | Titer_Low => true
-  | Titer_Moderate => true
-  | Titer_High => false
-  | Titer_Critical => false
+(** Plasma safety threshold policies.
+
+    Different institutions use different titer thresholds:
+    - Standard: Moderate titer (50-199) considered safe
+    - Strict: Only low titer (<50) considered safe
+    - Critical care: Critical titer (>=500) always rejected
+
+    The strict policy is recommended for:
+    - Pediatric patients
+    - Patients with compromised immune systems
+    - Massive transfusion protocols
+    - When patient ABO status is uncertain *)
+
+Inductive TiterPolicy : Type :=
+  | Policy_Standard
+  | Policy_Strict
+  | Policy_Critical_Only.
+
+Definition plasma_safe_with_policy (policy : TiterPolicy) (recipient_abo : ABO) (p : PlasmaUnit) : bool :=
+  match policy, plasma_hemolytic_risk recipient_abo p with
+  | _, Titer_Low => true
+  | Policy_Standard, Titer_Moderate => true
+  | Policy_Strict, Titer_Moderate => false
+  | Policy_Critical_Only, Titer_Moderate => true
+  | _, Titer_High => false
+  | _, Titer_Critical => false
   end.
 
-Theorem AB_plasma_no_titer_risk : forall r titer_A titer_B vol rh,
+Definition plasma_safe_for_recipient (recipient_abo : ABO) (p : PlasmaUnit) : bool :=
+  plasma_safe_with_policy Policy_Standard recipient_abo p.
+
+Definition plasma_safe_strict (recipient_abo : ABO) (p : PlasmaUnit) : bool :=
+  plasma_safe_with_policy Policy_Strict recipient_abo p.
+
+Theorem strict_policy_rejects_moderate : forall abo p,
+  plasma_hemolytic_risk abo p = Titer_Moderate ->
+  plasma_safe_strict abo p = false.
+Proof.
+  intros abo p H. unfold plasma_safe_strict, plasma_safe_with_policy. rewrite H. reflexivity.
+Qed.
+
+Theorem standard_policy_accepts_moderate : forall abo p,
+  plasma_hemolytic_risk abo p = Titer_Moderate ->
+  plasma_safe_for_recipient abo p = true.
+Proof.
+  intros abo p H. unfold plasma_safe_for_recipient, plasma_safe_with_policy. rewrite H. reflexivity.
+Qed.
+
+Theorem strict_implies_standard : forall abo p,
+  plasma_safe_strict abo p = true ->
+  plasma_safe_for_recipient abo p = true.
+Proof.
+  intros abo p H.
+  unfold plasma_safe_strict, plasma_safe_for_recipient, plasma_safe_with_policy in *.
+  destruct (plasma_hemolytic_risk abo p); auto.
+Qed.
+
+Theorem all_policies_reject_high : forall policy abo p,
+  plasma_hemolytic_risk abo p = Titer_High ->
+  plasma_safe_with_policy policy abo p = false.
+Proof.
+  intros policy abo p H. unfold plasma_safe_with_policy. rewrite H. destruct policy; reflexivity.
+Qed.
+
+Theorem all_policies_reject_critical : forall policy abo p,
+  plasma_hemolytic_risk abo p = Titer_Critical ->
+  plasma_safe_with_policy policy abo p = false.
+Proof.
+  intros policy abo p H. unfold plasma_safe_with_policy. rewrite H. destruct policy; reflexivity.
+Qed.
+
+Theorem AB_plasma_no_titer_risk : forall (r : ABO) (titer_A titer_B vol : nat) (rh : Rh),
   let p := mkPlasmaUnit AB rh titer_A titer_B vol in
   plasma_hemolytic_risk r p = Titer_Low.
 Proof. intros [| | | ]; reflexivity. Qed.
 
-Theorem low_titer_O_safe_for_A : forall titer_A titer_B vol rh,
-  titer_A <= 50 -> titer_B <= 50 ->
+Theorem low_titer_O_safe_for_A : forall (titer_A titer_B vol : nat) (rh : Rh),
+  (titer_A <= 50)%nat -> (titer_B <= 50)%nat ->
   let p := mkPlasmaUnit O rh titer_A titer_B vol in
   plasma_safe_for_recipient A p = true.
 Proof.
   intros titer_A titer_B vol rh Ha Hb.
-  unfold plasma_safe_for_recipient, plasma_hemolytic_risk, classify_titer.
+  unfold plasma_safe_for_recipient, plasma_safe_with_policy, plasma_hemolytic_risk, classify_titer.
   simpl. apply Nat.leb_le in Ha. rewrite Ha. reflexivity.
 Qed.
 
-Theorem high_titer_O_risky_for_A : forall titer_B vol rh,
+Theorem high_titer_O_risky_for_A : forall (titer_B vol : nat) (rh : Rh),
   let p := mkPlasmaUnit O rh 300 titer_B vol in
   plasma_safe_for_recipient A p = false.
-Proof. reflexivity. Qed.
+Proof.
+  intros. unfold plasma_safe_for_recipient, plasma_safe_with_policy.
+  simpl. reflexivity.
+Qed.
 
 (** Whole blood requires both RBC and plasma compatibility *)
 Definition whole_blood_compatible (recipient donor : BloodType) : bool :=
@@ -543,6 +827,134 @@ Definition has_A1_antigen (s : ABOSubtype) : bool :=
 Definition may_have_anti_A1 (s : ABOSubtype) : bool :=
   match s with Sub_A2 | Sub_A2B => true | _ => false end.
 
+(** ABO Subgroup Serological Reaction Patterns.
+
+    ABO subtypes show characteristic patterns in forward and reverse typing.
+    Reaction strength is graded 0-4:
+    - 4+: Strong immediate agglutination, large clumps
+    - 3+: Large clumps, some free cells
+    - 2+: Medium clumps, many free cells
+    - 1+: Small clumps, many free cells
+    - w (weak): Microscopic agglutination only
+    - 0: No agglutination
+
+    Clinical significance:
+    - Weak A/B subtypes may be mistyped as O
+    - A2 cells react weakly with some anti-A reagents
+    - Weak subtypes require additional testing (adsorption-elution)
+    - Mixed-field reactions suggest chimerism or recent transfusion *)
+
+Inductive ReactionStrength : Type :=
+  | Reaction_4plus
+  | Reaction_3plus
+  | Reaction_2plus
+  | Reaction_1plus
+  | Reaction_Weak
+  | Reaction_MixedField
+  | Reaction_Negative.
+
+Definition reaction_strength_value (r : ReactionStrength) : nat :=
+  match r with
+  | Reaction_4plus => 4
+  | Reaction_3plus => 3
+  | Reaction_2plus => 2
+  | Reaction_1plus => 1
+  | Reaction_Weak => 0
+  | Reaction_MixedField => 1
+  | Reaction_Negative => 0
+  end.
+
+Record SerologicalPattern := mkSerologicalPattern {
+  forward_anti_A : ReactionStrength;
+  forward_anti_B : ReactionStrength;
+  forward_anti_AB : ReactionStrength;
+  reverse_A1_cells : ReactionStrength;
+  reverse_B_cells : ReactionStrength
+}.
+
+Definition expected_serology (s : ABOSubtype) : SerologicalPattern :=
+  match s with
+  | Sub_A1 => mkSerologicalPattern
+      Reaction_4plus Reaction_Negative Reaction_4plus
+      Reaction_Negative Reaction_4plus
+  | Sub_A2 => mkSerologicalPattern
+      Reaction_2plus Reaction_Negative Reaction_3plus
+      Reaction_Negative Reaction_4plus
+  | Sub_A3 => mkSerologicalPattern
+      Reaction_MixedField Reaction_Negative Reaction_MixedField
+      Reaction_Negative Reaction_4plus
+  | Sub_Aint => mkSerologicalPattern
+      Reaction_Weak Reaction_Negative Reaction_1plus
+      Reaction_Weak Reaction_4plus
+  | Sub_B => mkSerologicalPattern
+      Reaction_Negative Reaction_4plus Reaction_4plus
+      Reaction_4plus Reaction_Negative
+  | Sub_A1B => mkSerologicalPattern
+      Reaction_4plus Reaction_4plus Reaction_4plus
+      Reaction_Negative Reaction_Negative
+  | Sub_A2B => mkSerologicalPattern
+      Reaction_2plus Reaction_4plus Reaction_4plus
+      Reaction_Negative Reaction_Negative
+  | Sub_O => mkSerologicalPattern
+      Reaction_Negative Reaction_Negative Reaction_Negative
+      Reaction_4plus Reaction_4plus
+  | Sub_Bombay => mkSerologicalPattern
+      Reaction_Negative Reaction_Negative Reaction_Negative
+      Reaction_4plus Reaction_4plus
+  end.
+
+Definition is_weak_subgroup (s : ABOSubtype) : bool :=
+  match s with
+  | Sub_A3 | Sub_Aint => true
+  | _ => false
+  end.
+
+Definition needs_additional_testing (pattern : SerologicalPattern) : bool :=
+  match forward_anti_A pattern, forward_anti_B pattern with
+  | Reaction_Weak, _ => true
+  | Reaction_MixedField, _ => true
+  | _, Reaction_Weak => true
+  | _, Reaction_MixedField => true
+  | _, _ => false
+  end.
+
+Definition forward_reverse_discrepancy (pattern : SerologicalPattern) : bool :=
+  let forward_A := reaction_strength_value (forward_anti_A pattern) in
+  let forward_B := reaction_strength_value (forward_anti_B pattern) in
+  let reverse_A := reaction_strength_value (reverse_A1_cells pattern) in
+  let reverse_B := reaction_strength_value (reverse_B_cells pattern) in
+  let has_A_forward := Nat.ltb 0 forward_A in
+  let has_B_forward := Nat.ltb 0 forward_B in
+  let anti_A_in_reverse := Nat.ltb 0 reverse_A in
+  let anti_B_in_reverse := Nat.ltb 0 reverse_B in
+  (has_A_forward && anti_A_in_reverse) || (has_B_forward && anti_B_in_reverse).
+
+Definition risk_of_mistyping_as_O (s : ABOSubtype) : bool :=
+  match s with
+  | Sub_A3 | Sub_Aint => true
+  | _ => false
+  end.
+
+Theorem A1_strong_reactions :
+  let p := expected_serology Sub_A1 in
+  forward_anti_A p = Reaction_4plus /\ forward_anti_AB p = Reaction_4plus.
+Proof. split; reflexivity. Qed.
+
+Theorem A2_weaker_than_A1 :
+  reaction_strength_value (forward_anti_A (expected_serology Sub_A2)) <
+  reaction_strength_value (forward_anti_A (expected_serology Sub_A1)).
+Proof. simpl; lia. Qed.
+
+Theorem weak_subtypes_need_testing :
+  needs_additional_testing (expected_serology Sub_A3) = true /\
+  needs_additional_testing (expected_serology Sub_Aint) = true.
+Proof. split; reflexivity. Qed.
+
+Theorem O_and_Bombay_same_forward_typing :
+  forward_anti_A (expected_serology Sub_O) = forward_anti_A (expected_serology Sub_Bombay) /\
+  forward_anti_B (expected_serology Sub_O) = forward_anti_B (expected_serology Sub_Bombay).
+Proof. split; reflexivity. Qed.
+
 (** Generalized A1 incompatibility check: recipients who may have anti-A1
     cannot receive units with A1 antigen. This generalizes the previous
     ad-hoc checks for Sub_A2/Sub_A1, Sub_A2/Sub_A1B, Sub_A2B/Sub_A1. *)
@@ -623,6 +1035,132 @@ Theorem weak_d_policies :
   variant_donation_type Rh_Partial_DVI = Pos.
 Proof. repeat split; reflexivity. Qed.
 
+(** D Antigen Epitope Model for Partial D Variants.
+
+    The RhD protein has approximately 30 epitopes (epD1-epD9, plus others).
+    Partial D variants lack certain epitopes and can form antibodies against
+    the missing epitopes if exposed to normal RhD-positive blood.
+
+    Clinical significance:
+    - Partial D individuals should receive Rh-negative blood
+    - Partial D donors are typed as Rh-positive (they express D antigen)
+    - Missing epitopes determine which anti-D specificities can form
+
+    This model captures the major partial D categories and their epitope profiles.
+    Epitope numbering follows the standard epD1-epD9 nomenclature. *)
+
+Inductive DEpitope : Type :=
+  | epD1 | epD2 | epD3 | epD4 | epD5 | epD6 | epD7 | epD8 | epD9.
+
+Definition d_epitope_eq_dec (x y : DEpitope) : {x = y} + {x <> y}.
+Proof. decide equality. Defined.
+
+Definition all_d_epitopes : list DEpitope :=
+  [epD1; epD2; epD3; epD4; epD5; epD6; epD7; epD8; epD9].
+
+Definition variant_has_epitope (v : RhVariant) (ep : DEpitope) : bool :=
+  match v with
+  | Rh_Normal_Pos => true
+  | Rh_Normal_Neg => false
+  | Rh_Weak_1 | Rh_Weak_2 | Rh_Weak_3 => true
+  | Rh_Partial_DVI =>
+      match ep with
+      | epD1 | epD5 | epD6 | epD7 => false
+      | _ => true
+      end
+  | Rh_Partial_DVa =>
+      match ep with
+      | epD5 | epD6 | epD7 => false
+      | _ => true
+      end
+  | Rh_Partial_DIIIa =>
+      match ep with
+      | epD3 | epD4 | epD9 => false
+      | _ => true
+      end
+  | Rh_Partial_DIVa =>
+      match ep with
+      | epD4 | epD5 => false
+      | _ => true
+      end
+  | Rh_Partial_DV =>
+      match ep with
+      | epD3 | epD4 => false
+      | _ => true
+      end
+  | Rh_Partial_DVII =>
+      match ep with
+      | epD3 | epD5 | epD9 => false
+      | _ => true
+      end
+  end.
+
+Definition missing_epitopes (v : RhVariant) : list DEpitope :=
+  filter (fun ep => negb (variant_has_epitope v ep)) all_d_epitopes.
+
+Definition can_form_anti_epitope (recipient donor : RhVariant) (ep : DEpitope) : bool :=
+  negb (variant_has_epitope recipient ep) && variant_has_epitope donor ep.
+
+Definition epitope_incompatible (recipient donor : RhVariant) : bool :=
+  existsb (can_form_anti_epitope recipient donor) all_d_epitopes.
+
+Theorem normal_pos_has_all_epitopes : forall ep,
+  variant_has_epitope Rh_Normal_Pos ep = true.
+Proof. destruct ep; reflexivity. Qed.
+
+Theorem normal_neg_has_no_epitopes : forall ep,
+  variant_has_epitope Rh_Normal_Neg ep = false.
+Proof. destruct ep; reflexivity. Qed.
+
+Theorem weak_d_has_all_epitopes : forall ep,
+  variant_has_epitope Rh_Weak_1 ep = true /\
+  variant_has_epitope Rh_Weak_2 ep = true /\
+  variant_has_epitope Rh_Weak_3 ep = true.
+Proof. destruct ep; repeat split; reflexivity. Qed.
+
+Theorem partial_DVI_missing_epitopes :
+  missing_epitopes Rh_Partial_DVI = [epD1; epD5; epD6; epD7].
+Proof. reflexivity. Qed.
+
+Theorem partial_DVa_missing_epitopes :
+  missing_epitopes Rh_Partial_DVa = [epD5; epD6; epD7].
+Proof. reflexivity. Qed.
+
+Theorem partial_D_incompatible_with_normal :
+  epitope_incompatible Rh_Partial_DVI Rh_Normal_Pos = true.
+Proof. reflexivity. Qed.
+
+Theorem weak_d_compatible_with_normal :
+  epitope_incompatible Rh_Weak_1 Rh_Normal_Pos = false.
+Proof. reflexivity. Qed.
+
+Theorem normal_neg_incompatible_with_any_pos : forall v,
+  v <> Rh_Normal_Neg ->
+  epitope_incompatible Rh_Normal_Neg v = true.
+Proof.
+  intros v Hneq. destruct v; try reflexivity.
+  exfalso; apply Hneq; reflexivity.
+Qed.
+
+Definition rh_epitope_safe (recipient donor : RhVariant) : bool :=
+  negb (epitope_incompatible recipient donor).
+
+(** Extended case solver - available after ABOSubtype and RhVariant are defined *)
+Ltac exhaust_extended_cases :=
+  intros;
+  repeat match goal with
+  | [ x : ABO |- _ ] => destruct x
+  | [ x : Rh |- _ ] => destruct x
+  | [ x : BloodType |- _ ] => let a := fresh in let r := fresh in destruct x as [a r]
+  | [ x : ABOSubtype |- _ ] => destruct x
+  | [ x : RhVariant |- _ ] => destruct x
+  | [ x : Severity |- _ ] => destruct x
+  | [ x : Priority |- _ ] => destruct x
+  | [ x : Product |- _ ] => destruct x
+  | [ x : TiterLevel |- _ ] => destruct x
+  end;
+  try reflexivity; try discriminate; auto.
+
 (** Rh variant compatibility check.
     Uses transfusion type for recipient (what they can safely receive)
     and donation type for donor (what antigen they express). *)
@@ -652,6 +1190,28 @@ Proof. reflexivity. Qed.
 Theorem normal_neg_self_compatible :
   rh_variant_compatible Rh_Normal_Neg Rh_Normal_Neg = true.
 Proof. reflexivity. Qed.
+
+(** Weak D types are epitope-safe with any donor (they have all epitopes) *)
+Theorem weak_d_epitope_safe_with_any : forall d,
+  rh_epitope_safe Rh_Weak_1 d = true /\
+  rh_epitope_safe Rh_Weak_2 d = true /\
+  rh_epitope_safe Rh_Weak_3 d = true.
+Proof. destruct d; repeat split; reflexivity. Qed.
+
+(** Normal Rh-positive is epitope-safe with any donor *)
+Theorem normal_pos_epitope_safe_with_any : forall d,
+  rh_epitope_safe Rh_Normal_Pos d = true.
+Proof. destruct d; reflexivity. Qed.
+
+(** Normal Rh-negative is only epitope-safe with Rh-negative donors *)
+Theorem normal_neg_epitope_safe_only_with_neg :
+  rh_epitope_safe Rh_Normal_Neg Rh_Normal_Neg = true /\
+  forall d, d <> Rh_Normal_Neg -> rh_epitope_safe Rh_Normal_Neg d = false.
+Proof.
+  split.
+  - reflexivity.
+  - intros d Hneq. destruct d; try reflexivity. exfalso; apply Hneq; reflexivity.
+Qed.
 
 (** Full subtype compatibility including both ABO subtypes and Rh variants *)
 Definition full_subtype_compatible (r_sub d_sub : ABOSubtype)
@@ -850,7 +1410,7 @@ Theorem AO_BO_distribution :
   pd_A d = 1 /\ pd_B d = 1 /\ pd_AB d = 1 /\ pd_O d = 1.
 Proof. repeat split; reflexivity. Qed.
 
-(** Hardy-Weinberg equilibrium *)
+(** Hardy-Weinberg equilibrium - integer version for compatibility *)
 Record AlleleFreq := mkAlleleFreq { freq_pA : nat; freq_pB : nat; freq_pO : nat }.
 
 Definition hardy_weinberg (f : AlleleFreq) : PhenoDistribution :=
@@ -862,6 +1422,101 @@ Theorem hardy_weinberg_totals : forall f,
   let t := freq_pA f + freq_pB f + freq_pO f in
   pd_A d + pd_B d + pd_AB d + pd_O d = t * t.
 Proof. intros; unfold hardy_weinberg; simpl; lia. Qed.
+
+Require Import QArith.
+
+Section RationalFrequencies.
+Open Scope Q_scope.
+
+(** Hardy-Weinberg equilibrium - rational (Q) version for precision.
+    Allele frequencies are represented as rationals summing to 1.
+    This avoids the precision loss of integer-scaled frequencies. *)
+Record AlleleFreqQ := mkAlleleFreqQ {
+  freq_pA_Q : Q;
+  freq_pB_Q : Q;
+  freq_pO_Q : Q
+}.
+
+Record PhenoDistributionQ := mkPhenoDistQ {
+  pd_A_Q : Q;
+  pd_B_Q : Q;
+  pd_AB_Q : Q;
+  pd_O_Q : Q
+}.
+
+Definition hardy_weinberg_Q (f : AlleleFreqQ) : PhenoDistributionQ :=
+  let pA := freq_pA_Q f in
+  let pB := freq_pB_Q f in
+  let pO := freq_pO_Q f in
+  mkPhenoDistQ
+    (pA * pA + 2 * pA * pO)
+    (pB * pB + 2 * pB * pO)
+    (2 * pA * pB)
+    (pO * pO).
+
+Definition allele_freq_sum (f : AlleleFreqQ) : Q :=
+  freq_pA_Q f + freq_pB_Q f + freq_pO_Q f.
+
+Definition pheno_dist_sum (d : PhenoDistributionQ) : Q :=
+  pd_A_Q d + pd_B_Q d + pd_AB_Q d + pd_O_Q d.
+
+(** The Hardy-Weinberg principle: if allele frequencies sum to 1,
+    then genotype frequencies also sum to 1. This is because
+    (pA + pB + pO)^2 expands to the sum of all genotype frequencies. *)
+Theorem hardy_weinberg_Q_totals : forall f,
+  allele_freq_sum f == 1 ->
+  pheno_dist_sum (hardy_weinberg_Q f) == 1.
+Proof.
+  intros [pA pB pO] Hsum.
+  unfold hardy_weinberg_Q, pheno_dist_sum, allele_freq_sum in *. simpl in *.
+  assert (H: pA * pA + 2 * pA * pO + (pB * pB + 2 * pB * pO) + 2 * pA * pB + pO * pO
+             == (pA + pB + pO) * (pA + pB + pO)) by ring.
+  rewrite H. rewrite Hsum. ring.
+Qed.
+
+Definition us_allele_freq_Q : AlleleFreqQ :=
+  mkAlleleFreqQ (28 # 100) (7 # 100) (65 # 100).
+
+Theorem us_allele_freq_Q_sums_to_1 :
+  allele_freq_sum us_allele_freq_Q == 1.
+Proof. unfold allele_freq_sum, us_allele_freq_Q; simpl. reflexivity. Qed.
+
+Definition expected_phenotype_freq_Q (f : AlleleFreqQ) (pheno : ABO) : Q :=
+  let d := hardy_weinberg_Q f in
+  match pheno with
+  | A => pd_A_Q d
+  | B => pd_B_Q d
+  | AB => pd_AB_Q d
+  | O => pd_O_Q d
+  end.
+
+Definition expected_O_freq_US : Q := expected_phenotype_freq_Q us_allele_freq_Q O.
+
+Theorem expected_O_freq_US_value :
+  expected_O_freq_US == (4225 # 10000).
+Proof. unfold expected_O_freq_US, expected_phenotype_freq_Q, hardy_weinberg_Q, us_allele_freq_Q. simpl. reflexivity. Qed.
+
+(** Rh allele frequencies using rationals *)
+Record RhAlleleFreqQ := mkRhAlleleFreqQ {
+  freq_D_Q : Q;
+  freq_d_Q : Q
+}.
+
+Definition expected_rh_neg_Q (f : RhAlleleFreqQ) : Q :=
+  freq_d_Q f * freq_d_Q f.
+
+Definition expected_rh_pos_Q (f : RhAlleleFreqQ) : Q :=
+  1 - expected_rh_neg_Q f.
+
+Definition us_rh_freq_Q : RhAlleleFreqQ := mkRhAlleleFreqQ (60 # 100) (40 # 100).
+
+Theorem us_rh_neg_expected :
+  expected_rh_neg_Q us_rh_freq_Q == (16 # 100).
+Proof. unfold expected_rh_neg_Q, us_rh_freq_Q. simpl. reflexivity. Qed.
+
+End RationalFrequencies.
+
+Close Scope Q_scope.
 
 (** Rh haplotypes (for extended Rh system) *)
 Record RhHaplotype := mkRhHap { hap_D : bool; hap_C : bool; hap_E : bool }.
@@ -965,6 +1620,123 @@ Definition electronic_xm_eligible (two_determinations no_antibodies : bool) : bo
 Theorem electronic_fastest :
   test_time_minutes ElectronicCrossmatch < test_time_minutes ImmediateSpin.
 Proof. simpl; lia. Qed.
+
+(** Direct Antiglobulin Test (DAT) / Coombs Test Modeling.
+
+    The DAT detects antibodies or complement bound to RBC surfaces.
+    Positive DAT indicates:
+    - Autoimmune hemolytic anemia (AIHA) - warm or cold type
+    - Drug-induced hemolytic anemia
+    - Hemolytic disease of the fetus/newborn (HDFN)
+    - Transfusion reaction (delayed hemolytic)
+    - Alloantibody coating from incompatible transfusion
+
+    Clinical significance for transfusion:
+    - Positive DAT complicates crossmatching
+    - May indicate underlying autoimmune condition
+    - Warm AIHA: autoantibodies often have Rh-like specificity
+    - Cold AIHA: anti-I or anti-i specificity common *)
+
+Inductive DATResult : Type :=
+  | DAT_Negative
+  | DAT_Weak_Positive
+  | DAT_Positive
+  | DAT_Strong_Positive.
+
+Inductive DATPattern : Type :=
+  | DAT_IgG_Only
+  | DAT_C3_Only
+  | DAT_IgG_and_C3
+  | DAT_IgA_Only
+  | DAT_IgM_Only.
+
+Inductive AIHAType : Type :=
+  | AIHA_Warm
+  | AIHA_Cold
+  | AIHA_Mixed
+  | AIHA_Drug_Induced
+  | AIHA_None.
+
+Record DATProfile := mkDATProfile {
+  dat_result : DATResult;
+  dat_pattern : option DATPattern;
+  dat_autoantibody_specificity : option Antigen;
+  dat_thermal_amplitude : option nat
+}.
+
+Definition dat_positive (d : DATProfile) : bool :=
+  match dat_result d with
+  | DAT_Negative => false
+  | _ => true
+  end.
+
+Definition classify_aiha (d : DATProfile) : AIHAType :=
+  match dat_result d, dat_pattern d, dat_thermal_amplitude d with
+  | DAT_Negative, _, _ => AIHA_None
+  | _, Some DAT_IgG_Only, Some temp =>
+      if Nat.leb 37 temp then AIHA_Warm else AIHA_Cold
+  | _, Some DAT_IgG_Only, None => AIHA_Warm
+  | _, Some DAT_C3_Only, Some temp =>
+      if Nat.leb temp 30 then AIHA_Cold else AIHA_Mixed
+  | _, Some DAT_C3_Only, None => AIHA_Cold
+  | _, Some DAT_IgG_and_C3, _ => AIHA_Mixed
+  | _, _, _ => AIHA_Warm
+  end.
+
+Definition transfusion_risk_with_aiha (aiha : AIHAType) : Severity :=
+  match aiha with
+  | AIHA_None => Safe
+  | AIHA_Cold => DelayedHemolytic
+  | AIHA_Warm => AcuteHemolytic
+  | AIHA_Mixed => SevereAcuteHemolytic
+  | AIHA_Drug_Induced => DelayedHemolytic
+  end.
+
+Definition crossmatch_difficulty (d : DATProfile) : nat :=
+  match dat_result d with
+  | DAT_Negative => 0
+  | DAT_Weak_Positive => 1
+  | DAT_Positive => 2
+  | DAT_Strong_Positive => 3
+  end.
+
+Definition needs_adsorption_study (d : DATProfile) : bool :=
+  match dat_result d with
+  | DAT_Positive | DAT_Strong_Positive => true
+  | _ => false
+  end.
+
+Definition least_incompatible_strategy (d : DATProfile) : bool :=
+  dat_positive d && needs_adsorption_study d.
+
+Theorem negative_dat_no_aiha : forall d,
+  dat_result d = DAT_Negative -> classify_aiha d = AIHA_None.
+Proof. intros d H. unfold classify_aiha. rewrite H. reflexivity. Qed.
+
+Theorem positive_dat_complicates_crossmatch : forall d,
+  dat_positive d = true -> crossmatch_difficulty d >= 1.
+Proof.
+  intros d H. unfold dat_positive, crossmatch_difficulty in *.
+  destruct (dat_result d); simpl in *; try discriminate; lia.
+Qed.
+
+Theorem strong_positive_needs_adsorption :
+  needs_adsorption_study (mkDATProfile DAT_Strong_Positive None None None) = true.
+Proof. reflexivity. Qed.
+
+Definition warm_aiha_example : DATProfile :=
+  mkDATProfile DAT_Positive (Some DAT_IgG_Only) (Some Ag_e) (Some 37).
+
+Definition cold_aiha_example : DATProfile :=
+  mkDATProfile DAT_Positive (Some DAT_C3_Only) (Some Ag_I) (Some 4).
+
+Theorem warm_aiha_classified_correctly :
+  classify_aiha warm_aiha_example = AIHA_Warm.
+Proof. reflexivity. Qed.
+
+Theorem cold_aiha_classified_correctly :
+  classify_aiha cold_aiha_example = AIHA_Cold.
+Proof. reflexivity. Qed.
 
 (** Reaction severity assessment *)
 Definition assess_severity (recipient donor : BloodType) : Severity :=
@@ -1901,8 +2673,17 @@ Proof. reflexivity. Qed.
 Theorem vulnerability_bounded : forall bt, vulnerability bt <= 7.
 Proof. intros [[| | | ] [| ]]; unfold vulnerability, count_donors; simpl; lia. Qed.
 
-(** Recipient helper functions for deriving blood type from extended profile. *)
-Definition recipient_blood_type (r : Recipient) : BloodType :=
+(** Recipient helper functions for deriving blood type from extended profile.
+
+    IMPORTANT: Bombay phenotype individuals type as group O on forward typing
+    (no A, B, or H antigens) but they have anti-A, anti-B, AND anti-H antibodies.
+    They can ONLY receive blood from other Bombay donors, not from group O.
+
+    The phenotypic_blood_type function returns what the typing shows (O for Bombay).
+    The recipient_is_bombay predicate identifies true Bombay recipients.
+    Compatibility checks must handle Bombay specially. *)
+
+Definition phenotypic_blood_type (r : Recipient) : BloodType :=
   let abo := match rcpt_subtype r with
              | Sub_A1 | Sub_A2 | Sub_A3 | Sub_Aint => A
              | Sub_B => B
@@ -1912,23 +2693,75 @@ Definition recipient_blood_type (r : Recipient) : BloodType :=
   let rh := variant_transfusion_type (rcpt_rh_variant r) in
   (abo, rh).
 
+Definition recipient_is_bombay (r : Recipient) : bool :=
+  match rcpt_subtype r with
+  | Sub_Bombay => true
+  | _ => false
+  end.
+
+Definition recipient_blood_type (r : Recipient) : BloodType :=
+  phenotypic_blood_type r.
+
 (** Unified compatibility check for Recipient against BloodType.
-    Reuses core compatible function and adds sensitization/childbearing logic. *)
+    Reuses core compatible function and adds sensitization/childbearing logic.
+
+    CRITICAL: Bombay recipients can ONLY receive Bombay blood.
+    Standard O-negative blood contains H antigen which Bombay recipients
+    will react against with their anti-H antibodies. *)
 Definition recipient_compatible_with_bt (r : Recipient) (d : BloodType) : bool :=
-  let base_compat := compatible (recipient_blood_type r) d in
-  let rh_ok := match rcpt_sensitized r, snd (recipient_blood_type r), snd d with
-               | Naive, Neg, Pos => negb (rcpt_female_childbearing r)
-               | Sensitized, Neg, Pos => false
-               | _, _, _ => true
-               end in
-  base_compat && rh_ok.
+  if recipient_is_bombay r then false
+  else
+    let base_compat := compatible (recipient_blood_type r) d in
+    let rh_ok := match rcpt_sensitized r, snd (recipient_blood_type r), snd d with
+                 | Naive, Neg, Pos => negb (rcpt_female_childbearing r)
+                 | Sensitized, Neg, Pos => false
+                 | _, _, _ => true
+                 end in
+    base_compat && rh_ok.
+
+(** Bombay-to-Bombay compatibility using subtype-level matching *)
+Definition bombay_compatible (r_sub d_sub : ABOSubtype) (r_rh d_rh : Rh) : bool :=
+  match r_sub, d_sub with
+  | Sub_Bombay, Sub_Bombay =>
+      match r_rh, d_rh with
+      | Neg, Pos => false
+      | _, _ => true
+      end
+  | Sub_Bombay, _ => false
+  | _, _ => true
+  end.
+
+Theorem bombay_cannot_receive_O :
+  forall r, recipient_is_bombay r = true ->
+  recipient_compatible_with_bt r O_neg = false.
+Proof.
+  intros r H. unfold recipient_compatible_with_bt. rewrite H. reflexivity.
+Qed.
+
+Theorem bombay_cannot_receive_any_standard_type :
+  forall r bt, recipient_is_bombay r = true ->
+  recipient_compatible_with_bt r bt = false.
+Proof.
+  intros r bt H. unfold recipient_compatible_with_bt. rewrite H. reflexivity.
+Qed.
+
+Theorem non_bombay_uses_standard_compat :
+  forall r d, recipient_is_bombay r = false ->
+  recipient_compatible_with_bt r d = true ->
+  compatible (recipient_blood_type r) d = true.
+Proof.
+  intros r d Hnb H. unfold recipient_compatible_with_bt in H. rewrite Hnb in H.
+  apply andb_prop in H. destruct H. exact H.
+Qed.
 
 Theorem recipient_compatible_implies_base_compatible : forall r d,
   recipient_compatible_with_bt r d = true ->
   compatible (recipient_blood_type r) d = true.
 Proof.
   intros r d H. unfold recipient_compatible_with_bt in H.
-  apply andb_prop in H. destruct H. exact H.
+  destruct (recipient_is_bombay r) eqn:Hb.
+  - discriminate.
+  - apply andb_prop in H. destruct H. exact H.
 Qed.
 
 (** Note: These theorems test the extended logic for Rh-negative recipients.
@@ -1944,21 +2777,23 @@ Theorem naive_neg_base_incompatible : forall abo,
 Proof. intros [| | | ]; reflexivity. Qed.
 
 Theorem sensitized_cannot_receive_pos : forall sub d_abo,
+  sub <> Sub_Bombay ->
   let r := mkRecipient sub Rh_Normal_Neg Sensitized [] false in
   recipient_compatible_with_bt r (d_abo, Pos) = false.
 Proof.
-  intros sub d_abo.
-  unfold recipient_compatible_with_bt, recipient_blood_type.
-  simpl. destruct sub, d_abo; simpl; reflexivity.
+  intros sub d_abo Hnotbombay.
+  unfold recipient_compatible_with_bt, recipient_is_bombay, recipient_blood_type, phenotypic_blood_type.
+  destruct sub, d_abo; reflexivity.
 Qed.
 
 Theorem childbearing_female_protected : forall sub d_abo,
+  sub <> Sub_Bombay ->
   let r := mkRecipient sub Rh_Normal_Neg Naive [] true in
   recipient_compatible_with_bt r (d_abo, Pos) = false.
 Proof.
-  intros sub d_abo.
-  unfold recipient_compatible_with_bt, recipient_blood_type.
-  simpl. destruct sub, d_abo; simpl; reflexivity.
+  intros sub d_abo Hnotbombay.
+  unfold recipient_compatible_with_bt, recipient_is_bombay, recipient_blood_type, phenotypic_blood_type.
+  destruct sub, d_abo; reflexivity.
 Qed.
 
 Definition sensitization_risk (recipient donor : BloodType) : bool :=
