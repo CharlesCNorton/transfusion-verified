@@ -372,21 +372,128 @@ Ltac exhaust_basic_cases :=
 (*  Core principle: A transfusion is safe iff donor cells carry no antigens   *)
 (*  against which the recipient has antibodies.                               *)
 (*                                                                            *)
+(*  IMPORTANT DISTINCTION:                                                    *)
+(*  - ABO antibodies (anti-A, anti-B) are NATURALLY OCCURRING isoagglutinins  *)
+(*    present from early life without prior exposure                          *)
+(*  - Rh antibodies (anti-D, anti-C, anti-E, etc.) are IMMUNE antibodies      *)
+(*    that develop only after exposure (transfusion or pregnancy)             *)
+(*                                                                            *)
+(*  This model separates these two categories and requires explicit           *)
+(*  sensitization status for Rh compatibility decisions.                      *)
+(*                                                                            *)
 (******************************************************************************)
+
+(** Antigen profile: which antigens are present on an individual's RBCs.
+    Modeled as a membership predicate over the full Antigen type. *)
+Definition AntigenSet := Antigen -> bool.
+
+(** Antibody profile: which antibodies are present in an individual's plasma.
+    For ABO, these are naturally occurring. For other systems, they arise
+    from immune sensitization. *)
+Definition AntibodySet := Antigen -> bool.
+
+(** Empty antigen/antibody sets *)
+Definition empty_antigen_set : AntigenSet := fun _ => false.
+Definition empty_antibody_set : AntibodySet := fun _ => false.
+
+(** Set operations *)
+Definition antigen_in (ag : Antigen) (s : AntigenSet) : bool := s ag.
+Definition antibody_in (ag : Antigen) (s : AntibodySet) : bool := s ag.
+
+Definition antigen_set_union (s1 s2 : AntigenSet) : AntigenSet :=
+  fun ag => s1 ag || s2 ag.
+
+Definition antibody_set_union (s1 s2 : AntibodySet) : AntibodySet :=
+  fun ag => s1 ag || s2 ag.
+
+Definition antigen_set_add (ag : Antigen) (s : AntigenSet) : AntigenSet :=
+  fun ag' => if antigen_eq_dec ag ag' then true else s ag'.
+
+Definition antibody_set_add (ag : Antigen) (s : AntibodySet) : AntibodySet :=
+  fun ag' => if antigen_eq_dec ag ag' then true else s ag'.
+
+(** Core compatibility: set disjointness between donor antigens and recipient antibodies *)
+Definition sets_disjoint (donor_ags : AntigenSet) (recipient_abs : AntibodySet)
+                         (antigens_to_check : list Antigen) : bool :=
+  forallb (fun ag => negb (donor_ags ag && recipient_abs ag)) antigens_to_check.
+
+(** Which antigens are present on RBCs of a given ABO/Rh phenotype.
+    This function maps phenotype to the FULL antigen set, not just core antigens. *)
+Definition phenotype_antigens (bt : BloodType) : AntigenSet :=
+  fun ag =>
+    match ag, bt with
+    | Ag_A, (A, _)  => true
+    | Ag_A, (AB, _) => true
+    | Ag_A1, (A, _) => true
+    | Ag_A1, (AB, _) => true
+    | Ag_B, (B, _)  => true
+    | Ag_B, (AB, _) => true
+    | Ag_H, (O, _)  => true
+    | Ag_H, (A, _)  => true
+    | Ag_H, (B, _)  => true
+    | Ag_H, (AB, _) => true
+    | Ag_D, (_, Pos) => true
+    | _, _ => false
+    end.
+
+(** ABO isoagglutinins: NATURALLY OCCURRING antibodies.
+    These are present from early childhood without prior transfusion/pregnancy.
+    Anti-A in type B and O individuals.
+    Anti-B in type A and O individuals.
+    NO anti-D here - anti-D requires immune sensitization. *)
+Definition abo_natural_antibodies (bt : BloodType) : AntibodySet :=
+  fun ag =>
+    match ag, bt with
+    | Ag_A, (B, _)  => true
+    | Ag_A, (O, _)  => true
+    | Ag_B, (A, _)  => true
+    | Ag_B, (O, _)  => true
+    | _, _ => false
+    end.
+
+(** Rh sensitization status *)
+Inductive RhSensitization : Type :=
+  | Rh_Naive
+  | Rh_Sensitized_D
+  | Rh_Sensitized_Multiple.
+
+(** Rh antibodies based on sensitization history.
+    Anti-D (and other Rh antibodies) only present if previously sensitized. *)
+Definition rh_immune_antibodies (rh : Rh) (sens : RhSensitization) : AntibodySet :=
+  fun ag =>
+    match sens, ag with
+    | Rh_Sensitized_D, Ag_D => true
+    | Rh_Sensitized_Multiple, Ag_D => true
+    | Rh_Sensitized_Multiple, Ag_C => true
+    | Rh_Sensitized_Multiple, Ag_E => true
+    | Rh_Sensitized_Multiple, Ag_c => true
+    | Rh_Sensitized_Multiple, Ag_e => true
+    | _, _ => false
+    end.
+
+(** Combined antibody profile: natural ABO + acquired Rh (if sensitized) *)
+Definition recipient_antibodies (bt : BloodType) (rh_sens : RhSensitization) : AntibodySet :=
+  antibody_set_union (abo_natural_antibodies bt) (rh_immune_antibodies (snd bt) rh_sens).
+
+(** LEGACY COMPATIBILITY FUNCTIONS
+    These maintain backward compatibility with existing code while being
+    semantically correct. The key fix: has_antibody_abo only covers ABO,
+    while has_antibody includes Rh for the conservative "always assume
+    sensitized" policy used in standard blood bank practice. *)
+
+(** ABO-only antibodies (naturally occurring) *)
+Definition has_antibody_abo (bt : BloodType) (ag : Antigen) : bool :=
+  abo_natural_antibodies bt ag.
 
 (** Which antigens are present on RBCs of a given blood type *)
 Definition has_antigen (bt : BloodType) (ag : Antigen) : bool :=
-  match ag, bt with
-  | Ag_A, (A, _)  => true
-  | Ag_A, (AB, _) => true
-  | Ag_B, (B, _)  => true
-  | Ag_B, (AB, _) => true
-  | Ag_D, (_, Pos) => true
-  | _, _ => false
-  end.
+  phenotype_antigens bt ag.
 
-(** Which antibodies are present in plasma of a given blood type *)
-Definition has_antibody (bt : BloodType) (ag : Antigen) : bool :=
+(** Conservative antibody model for standard blood bank practice.
+    Assumes Rh-negative individuals MAY have anti-D (worst-case for safety).
+    This is the appropriate model for routine crossmatching where
+    sensitization history is unknown or unreliable. *)
+Definition has_antibody_conservative (bt : BloodType) (ag : Antigen) : bool :=
   match ag, bt with
   | Ag_A, (B, _)  => true
   | Ag_A, (O, _)  => true
@@ -396,6 +503,10 @@ Definition has_antibody (bt : BloodType) (ag : Antigen) : bool :=
   | _, _ => false
   end.
 
+(** Default has_antibody uses conservative model for backward compatibility *)
+Definition has_antibody (bt : BloodType) (ag : Antigen) : bool :=
+  has_antibody_conservative bt ag.
+
 (** Fundamental immunological law: you cannot have both antigen and antibody *)
 Theorem antigen_antibody_exclusion : forall bt ag,
   has_antigen bt ag = true -> has_antibody bt ag = false.
@@ -404,42 +515,223 @@ Proof.
   simpl; intro H; try reflexivity; try discriminate.
 Qed.
 
+(** ABO antigens only *)
+Definition abo_antigens : list Antigen := [Ag_A; Ag_B].
+
 (** Core antigens for standard ABO-Rh compatibility *)
 Definition core_antigens : list Antigen := [Ag_A; Ag_B; Ag_D].
+
+(** Clinically significant minor antigens (high immunogenicity) *)
+Definition clinically_significant_antigens : list Antigen :=
+  [Ag_A; Ag_B; Ag_D; Ag_C; Ag_E; Ag_c; Ag_e; Ag_K; Ag_Fya; Ag_Fyb; Ag_Jka; Ag_Jkb; Ag_S; Ag_s].
 
 (** Antigen-antibody reaction check *)
 Definition causes_reaction (recipient donor : BloodType) (ag : Antigen) : bool :=
   has_antibody recipient ag && has_antigen donor ag.
 
+(** Reaction check with explicit sensitization *)
+Definition causes_reaction_with_sens (recipient donor : BloodType)
+                                      (rh_sens : RhSensitization) (ag : Antigen) : bool :=
+  recipient_antibodies recipient rh_sens ag && has_antigen donor ag.
+
 (** No reaction for a specific antigen *)
 Definition antigen_safe (recipient donor : BloodType) (ag : Antigen) : bool :=
   negb (causes_reaction recipient donor ag).
+
+(** No reaction with explicit sensitization status *)
+Definition antigen_safe_with_sens (recipient donor : BloodType)
+                                   (rh_sens : RhSensitization) (ag : Antigen) : bool :=
+  negb (causes_reaction_with_sens recipient donor rh_sens ag).
 
 (******************************************************************************)
 (*                                                                            *)
 (*                     III. COMPATIBILITY RELATIONS                           *)
 (*                                                                            *)
+(*  This section provides SEPARATED compatibility functions:                  *)
+(*  1. ABO compatibility (natural isoagglutinins - always present)            *)
+(*  2. Rh compatibility (immune antibodies - requires sensitization)          *)
+(*  3. Combined compatibility with explicit sensitization status              *)
+(*  4. Product-specific compatibility (RBC, plasma, platelets)                *)
+(*                                                                            *)
 (******************************************************************************)
 
-(** RBC compatibility — donor antigens must not trigger recipient antibodies *)
+(** ========== ABO COMPATIBILITY (Natural Isoagglutinins) ========== *)
+
+(** ABO-only RBC compatibility: checks only natural anti-A and anti-B.
+    This is ALWAYS safe to use regardless of Rh sensitization status. *)
+Definition rbc_compatible_abo (recipient donor : BloodType) : bool :=
+  forallb (fun ag => negb (has_antibody_abo recipient ag && has_antigen donor ag)) abo_antigens.
+
+(** ABO compatibility matrix verification *)
+Theorem rbc_compatible_abo_O_universal : forall recipient,
+  rbc_compatible_abo recipient (O, Pos) = true /\
+  rbc_compatible_abo recipient (O, Neg) = true.
+Proof.
+  intros [[| | | ] [| ]]; split; reflexivity.
+Qed.
+
+Theorem rbc_compatible_abo_AB_universal_recipient : forall donor,
+  rbc_compatible_abo (AB, Pos) donor = true /\
+  rbc_compatible_abo (AB, Neg) donor = true.
+Proof.
+  intros [[| | | ] [| ]]; split; reflexivity.
+Qed.
+
+(** ========== Rh COMPATIBILITY (Immune Antibodies) ========== *)
+
+(** Rh compatibility with explicit sensitization status.
+    Only checks Ag_D since that's what basic Rh typing determines.
+    For extended Rh matching, use the full antigen set functions. *)
+Definition rbc_compatible_rh (recipient_rh : Rh) (donor_rh : Rh)
+                              (sens : RhSensitization) : bool :=
+  match sens, recipient_rh, donor_rh with
+  | Rh_Naive, _, _ => true
+  | Rh_Sensitized_D, Neg, Pos => false
+  | Rh_Sensitized_D, _, _ => true
+  | Rh_Sensitized_Multiple, Neg, Pos => false
+  | Rh_Sensitized_Multiple, _, _ => true
+  end.
+
+(** Naive Rh-negative can receive Rh-positive (no anti-D yet) *)
+Theorem rh_naive_accepts_pos : forall r_rh d_rh,
+  rbc_compatible_rh r_rh d_rh Rh_Naive = true.
+Proof.
+  intros [| ] [| ]; reflexivity.
+Qed.
+
+(** Sensitized Rh-negative cannot receive Rh-positive *)
+Theorem rh_sensitized_rejects_pos :
+  rbc_compatible_rh Neg Pos Rh_Sensitized_D = false.
+Proof. reflexivity. Qed.
+
+(** ========== COMBINED COMPATIBILITY ========== *)
+
+(** Full RBC compatibility with explicit sensitization.
+    This is the CORRECT model: ABO is always checked, Rh only if sensitized. *)
+Definition rbc_compatible_with_sens (recipient donor : BloodType)
+                                     (sens : RhSensitization) : bool :=
+  rbc_compatible_abo recipient donor &&
+  rbc_compatible_rh (snd recipient) (snd donor) sens.
+
+(** Conservative RBC compatibility (assumes worst-case Rh sensitization).
+    Use this when sensitization history is unknown or unreliable.
+    This maintains backward compatibility with the original rbc_compatible. *)
 Definition rbc_compatible (recipient donor : BloodType) : bool :=
   forallb (antigen_safe recipient donor) core_antigens.
 
-(** Plasma compatibility — donor plasma antibodies must not attack recipient RBCs.
-    Since plasma contains antibodies (not antigens), we check whether the donor's
-    antibodies would react with the recipient's antigens. This is equivalent to
-    checking RBC compatibility in the reverse direction: if recipient could safely
-    donate RBCs to donor, then donor's plasma is safe for recipient.
+(** The conservative model is equivalent to assuming Rh sensitization *)
+Theorem rbc_compatible_is_conservative : forall r d,
+  rbc_compatible r d = true ->
+  rbc_compatible_with_sens r d Rh_Sensitized_D = true.
+Proof.
+  intros [[| | | ] [| ]] [[| | | ] [| ]] H; simpl in *;
+  try reflexivity; try discriminate.
+Qed.
 
-    Clinical context: Used for FFP, cryoprecipitate, and platelet transfusions
-    where plasma antibodies are the primary concern. AB plasma is universal
-    because AB individuals have no anti-A or anti-B antibodies. *)
+(** Naive recipients have MORE compatible donors *)
+Theorem naive_more_permissive : forall r d,
+  rbc_compatible r d = true ->
+  rbc_compatible_with_sens r d Rh_Naive = true.
+Proof.
+  intros [[| | | ] [| ]] [[| | | ] [| ]] H; simpl in *;
+  try reflexivity; try discriminate.
+Qed.
+
+(** ========== PLASMA COMPATIBILITY ========== *)
+
+(** Plasma compatibility is ABO-DRIVEN ONLY.
+    Rh is clinically irrelevant for plasma transfusion because:
+    1. Plasma contains antibodies, not antigens
+    2. Anti-D (if present in donor plasma) is diluted and rarely causes issues
+    3. Standard practice ignores Rh for plasma selection
+
+    AB plasma is universal donor (no anti-A or anti-B).
+    O plasma can only go to O recipients (has both anti-A and anti-B). *)
+Definition plasma_compatible_abo (recipient donor : BloodType) : bool :=
+  forallb (fun ag => negb (has_antigen recipient ag && has_antibody_abo donor ag)) abo_antigens.
+
+(** Legacy plasma_compatible - maintains old behavior for backward compatibility
+    but is semantically incorrect for Rh (too conservative). *)
 Definition plasma_compatible (recipient donor : BloodType) : bool :=
   rbc_compatible donor recipient.
+
+(** Correct plasma compatibility - ABO only *)
+Definition plasma_compatible_correct (recipient donor : BloodType) : bool :=
+  plasma_compatible_abo recipient donor.
+
+(** AB plasma is universal donor *)
+Theorem AB_plasma_universal_donor_correct : forall recipient,
+  plasma_compatible_correct recipient (AB, Pos) = true /\
+  plasma_compatible_correct recipient (AB, Neg) = true.
+Proof.
+  intros [[| | | ] [| ]]; split; reflexivity.
+Qed.
+
+(** O recipients can receive any plasma *)
+Theorem O_plasma_universal_recipient_correct : forall donor,
+  plasma_compatible_correct (O, Pos) donor = true /\
+  plasma_compatible_correct (O, Neg) donor = true.
+Proof.
+  intros [[| | | ] [| ]]; split; reflexivity.
+Qed.
 
 Definition plasma_compatible_rationale : Prop :=
   forall r d, plasma_compatible r d = true <->
     (forall ag, has_antibody d ag = true -> has_antigen r ag = false).
+
+(** ========== PRODUCT-SPECIFIC COMPATIBILITY ========== *)
+
+(** RBC product compatibility - uses conservative model *)
+Definition product_rbc_compatible (recipient donor : BloodType) : bool :=
+  rbc_compatible recipient donor.
+
+(** RBC product with known sensitization status *)
+Definition product_rbc_compatible_with_sens (recipient donor : BloodType)
+                                             (sens : RhSensitization) : bool :=
+  rbc_compatible_with_sens recipient donor sens.
+
+(** Plasma product compatibility - ABO only, Rh irrelevant *)
+Definition product_plasma_compatible (recipient donor : BloodType) : bool :=
+  plasma_compatible_correct recipient donor.
+
+(** Platelet compatibility - ABO preferred but not required, Rh matters for
+    females of childbearing potential due to RBC contamination in platelet units *)
+Definition product_platelet_compatible (recipient donor : BloodType)
+                                        (childbearing_female : bool) : bool :=
+  let abo_ok := plasma_compatible_correct recipient donor in
+  let rh_ok := match snd recipient, snd donor, childbearing_female with
+               | Neg, Pos, true => false
+               | _, _, _ => true
+               end in
+  abo_ok && rh_ok.
+
+(** Platelet ABO is less strict - O platelets often given to non-O *)
+Definition product_platelet_abo_acceptable (recipient donor : BloodType) : bool :=
+  match fst recipient, fst donor with
+  | _, O => true
+  | AB, _ => true
+  | x, y => if abo_eq_dec x y then true else false
+  end.
+
+Theorem platelet_O_acceptable_to_all : forall r_abo r_rh,
+  product_platelet_abo_acceptable (r_abo, r_rh) (O, Pos) = true /\
+  product_platelet_abo_acceptable (r_abo, r_rh) (O, Neg) = true.
+Proof.
+  intros [| | | ] [| ]; split; reflexivity.
+Qed.
+
+(** Cryoprecipitate - ABO match preferred for large volumes *)
+Definition product_cryo_compatible (recipient donor : BloodType) (volume_ml : nat) : bool :=
+  if Nat.leb 2000 volume_ml then
+    match fst recipient, fst donor with
+    | x, y => if abo_eq_dec x y then true else false
+    end
+  else
+    plasma_compatible_correct recipient donor.
+
+(** Whole blood - requires both RBC and plasma compatibility (rare use) *)
+Definition product_whole_blood_compatible (recipient donor : BloodType) : bool :=
+  rbc_compatible recipient donor && plasma_compatible_correct recipient donor.
 
 (** ABO Titer Modeling for Plasma Transfusion Risk Assessment.
     Titers are expressed as reciprocals (e.g., titer 64 means 1:64 dilution).
@@ -810,22 +1102,93 @@ Inductive ABOSubtype : Type :=
   | Sub_B
   | Sub_A1B | Sub_A2B
   | Sub_O
-  | Sub_Bombay.
+  | Sub_Bombay
+  | Sub_Acquired_B
+  | Sub_Cis_AB.
 
 Definition subtype_base_abo (s : ABOSubtype) : option ABO :=
   match s with
   | Sub_A1 | Sub_A2 | Sub_A3 | Sub_Aint => Some A
   | Sub_B => Some B
-  | Sub_A1B | Sub_A2B => Some AB
+  | Sub_A1B | Sub_A2B | Sub_Cis_AB => Some AB
   | Sub_O => Some O
   | Sub_Bombay => None
+  | Sub_Acquired_B => Some A
   end.
+
+(** Acquired B phenotype: bacterial deacetylase converts A antigen to B-like.
+    - Occurs in GI malignancy, infection, bowel obstruction
+    - Types as AB but patient is truly type A
+    - Anti-B present in plasma (patient's true antibodies)
+    - Transient: resolves when underlying condition treated
+    - Transfusion: give group A or O red cells, NOT group B *)
+Definition is_acquired_b (s : ABOSubtype) : bool :=
+  match s with Sub_Acquired_B => true | _ => false end.
+
+Definition acquired_b_safe_donor (donor_abo : ABO) : bool :=
+  match donor_abo with A | O => true | B | AB => false end.
+
+Theorem acquired_b_cannot_receive_B :
+  acquired_b_safe_donor B = false.
+Proof. reflexivity. Qed.
+
+Theorem acquired_b_can_receive_A :
+  acquired_b_safe_donor A = true.
+Proof. reflexivity. Qed.
+
+(** Cis-AB: both A and B encoded on same chromosome.
+    - Rare phenotype (mostly East Asian populations)
+    - Weak B antigen expression
+    - Types as AB but genetics shows single allele inheritance
+    - Parent can be O and child can be AB (unusual inheritance)
+    - Transfusion: treat as AB for receiving, but plasma has weak anti-B *)
+Definition is_cis_ab (s : ABOSubtype) : bool :=
+  match s with Sub_Cis_AB => true | _ => false end.
+
+Definition cis_ab_has_weak_anti_B (s : ABOSubtype) : bool :=
+  match s with Sub_Cis_AB => true | _ => false end.
+
+Theorem cis_ab_unusual_inheritance :
+  subtype_base_abo Sub_Cis_AB = Some AB.
+Proof. reflexivity. Qed.
 
 Definition has_A1_antigen (s : ABOSubtype) : bool :=
   match s with Sub_A1 | Sub_A1B => true | _ => false end.
 
+(** Anti-A1 policy: controls how to handle potential anti-A1 in A2/A2B recipients.
+
+    Anti-A1 occurs in approximately:
+    - 1-8% of A2 individuals
+    - 25-35% of A2B individuals
+
+    This is NOT deterministic - it's a conservative policy parameter.
+    - Conservative: Assume A2/A2B MAY have anti-A1 (avoid A1/A1B donors)
+    - Laboratory: Only consider anti-A1 if detected in antibody screen
+    - Permissive: Ignore potential anti-A1 (accept any ABO-compatible unit) *)
+Inductive AntiA1Policy : Type :=
+  | AntiA1_Conservative
+  | AntiA1_Laboratory_Based
+  | AntiA1_Permissive.
+
+Definition may_have_anti_A1_with_policy (s : ABOSubtype) (policy : AntiA1Policy)
+                                        (lab_detected : bool) : bool :=
+  match policy with
+  | AntiA1_Conservative => match s with Sub_A2 | Sub_A2B => true | _ => false end
+  | AntiA1_Laboratory_Based => lab_detected
+  | AntiA1_Permissive => false
+  end.
+
+(** Default conservative policy for backward compatibility *)
 Definition may_have_anti_A1 (s : ABOSubtype) : bool :=
-  match s with Sub_A2 | Sub_A2B => true | _ => false end.
+  may_have_anti_A1_with_policy s AntiA1_Conservative false.
+
+(** Prevalence of anti-A1 by subtype (percentage) *)
+Definition anti_A1_prevalence_A2 : nat := 8.
+Definition anti_A1_prevalence_A2B : nat := 35.
+
+Theorem A2B_higher_anti_A1_prevalence :
+  anti_A1_prevalence_A2 < anti_A1_prevalence_A2B.
+Proof. unfold anti_A1_prevalence_A2, anti_A1_prevalence_A2B; lia. Qed.
 
 (** ABO Subgroup Serological Reaction Patterns.
 
@@ -901,6 +1264,12 @@ Definition expected_serology (s : ABOSubtype) : SerologicalPattern :=
   | Sub_Bombay => mkSerologicalPattern
       Reaction_Negative Reaction_Negative Reaction_Negative
       Reaction_4plus Reaction_4plus
+  | Sub_Acquired_B => mkSerologicalPattern
+      Reaction_4plus Reaction_Weak Reaction_4plus
+      Reaction_Negative Reaction_4plus
+  | Sub_Cis_AB => mkSerologicalPattern
+      Reaction_4plus Reaction_2plus Reaction_4plus
+      Reaction_Negative Reaction_Weak
   end.
 
 Definition is_weak_subgroup (s : ABOSubtype) : bool :=
@@ -986,7 +1355,7 @@ Qed.
 Theorem bombay_exclusivity : forall s,
   s <> Sub_Bombay -> subtype_compatible Sub_Bombay s = false.
 Proof.
-  intros [| | | | | | | | ] H; try reflexivity; exfalso; apply H; reflexivity.
+  intros [| | | | | | | | | | ] H; try reflexivity; exfalso; apply H; reflexivity.
 Qed.
 
 Theorem A2_A1_incompatible :
@@ -1009,24 +1378,41 @@ Proof. reflexivity. Qed.
 Inductive RhVariant : Type :=
   | Rh_Normal_Pos
   | Rh_Normal_Neg
-  | Rh_Weak_1 | Rh_Weak_2 | Rh_Weak_3
+  | Rh_Weak_1 | Rh_Weak_2 | Rh_Weak_3 | Rh_Weak_4_0 | Rh_Weak_4_2
   | Rh_Partial_DVI | Rh_Partial_DVa | Rh_Partial_DIIIa
   | Rh_Partial_DIVa | Rh_Partial_DV | Rh_Partial_DVII.
 
 Definition variant_donation_type (v : RhVariant) : Rh :=
   match v with Rh_Normal_Neg => Neg | _ => Pos end.
 
+(** Weak D type 4.2 is the highest-risk partial D variant.
+    Unlike other weak D types, type 4.2 individuals:
+    - Can form anti-D
+    - Should receive Rh-negative blood
+    - Are clinically managed as partial D, not weak D *)
 Definition variant_transfusion_type (v : RhVariant) : Rh :=
   match v with
-  | Rh_Normal_Pos | Rh_Weak_1 | Rh_Weak_2 | Rh_Weak_3 => Pos
+  | Rh_Normal_Pos | Rh_Weak_1 | Rh_Weak_2 | Rh_Weak_3 | Rh_Weak_4_0 => Pos
+  | Rh_Weak_4_2 => Neg
   | _ => Neg
   end.
 
 Definition variant_can_make_anti_D (v : RhVariant) : bool :=
   match v with
-  | Rh_Normal_Pos | Rh_Weak_1 | Rh_Weak_2 | Rh_Weak_3 => false
+  | Rh_Normal_Pos | Rh_Weak_1 | Rh_Weak_2 | Rh_Weak_3 | Rh_Weak_4_0 => false
+  | Rh_Weak_4_2 => true
   | _ => true
   end.
+
+Theorem weak_d_4_2_is_high_risk :
+  variant_can_make_anti_D Rh_Weak_4_2 = true /\
+  variant_transfusion_type Rh_Weak_4_2 = Neg.
+Proof. split; reflexivity. Qed.
+
+Theorem weak_d_4_0_is_low_risk :
+  variant_can_make_anti_D Rh_Weak_4_0 = false /\
+  variant_transfusion_type Rh_Weak_4_0 = Pos.
+Proof. split; reflexivity. Qed.
 
 Theorem weak_d_policies :
   variant_transfusion_type Rh_Weak_1 = Pos /\
@@ -1062,7 +1448,12 @@ Definition variant_has_epitope (v : RhVariant) (ep : DEpitope) : bool :=
   match v with
   | Rh_Normal_Pos => true
   | Rh_Normal_Neg => false
-  | Rh_Weak_1 | Rh_Weak_2 | Rh_Weak_3 => true
+  | Rh_Weak_1 | Rh_Weak_2 | Rh_Weak_3 | Rh_Weak_4_0 => true
+  | Rh_Weak_4_2 =>
+      match ep with
+      | epD5 | epD6 | epD7 => false
+      | _ => true
+      end
   | Rh_Partial_DVI =>
       match ep with
       | epD1 | epD5 | epD6 | epD7 => false
@@ -1176,7 +1567,7 @@ Theorem rh_variant_self_compatible : forall v,
   variant_transfusion_type v = variant_donation_type v ->
   rh_variant_compatible v v = true.
 Proof.
-  intros [| | | | | | | | | | ] H; simpl in *; try reflexivity; discriminate.
+  intros [| | | | | | | | | | | | ] H; simpl in *; try reflexivity; discriminate.
 Qed.
 
 Theorem partial_d_not_self_compatible :
@@ -1738,6 +2129,35 @@ Theorem cold_aiha_classified_correctly :
   classify_aiha cold_aiha_example = AIHA_Cold.
 Proof. reflexivity. Qed.
 
+(** Extended compatibility with DAT profile consideration.
+    DAT-positive patients require special handling:
+    - May need least-incompatible unit selection
+    - Autoantibody specificity affects unit selection
+    - Crossmatch may be incompatible despite ABO/Rh match *)
+Definition extended_compatible_with_dat (r : Recipient) (d : Donor)
+                                        (dat : DATProfile) : bool * AIHAType :=
+  let base_compat := extended_compatible r d in
+  let aiha := classify_aiha dat in
+  (base_compat, aiha).
+
+Definition extended_transfusion_safe (r : Recipient) (d : Donor)
+                                     (dat : DATProfile) : bool :=
+  let (compat, aiha) := extended_compatible_with_dat r d dat in
+  compat && match aiha with
+            | AIHA_None => true
+            | AIHA_Cold => true
+            | _ => false
+            end.
+
+Theorem dat_negative_no_aiha_concern : forall r d,
+  let dat := mkDATProfile DAT_Negative None None None in
+  extended_transfusion_safe r d dat = extended_compatible r d.
+Proof.
+  intros r d.
+  unfold extended_transfusion_safe, extended_compatible_with_dat, classify_aiha.
+  simpl. rewrite andb_true_r. reflexivity.
+Qed.
+
 (** Reaction severity assessment *)
 Definition assess_severity (recipient donor : BloodType) : Severity :=
   if compatible recipient donor then Safe
@@ -1939,83 +2359,122 @@ Proof. exact O_neg_unique_universal. Qed.
 Theorem spec_extended_sound : SPEC_extended_sound.
 Proof. exact extended_conservative. Qed.
 
-(** Minor blood group systems: Kell, Duffy, Kidd, MNS, Lewis *)
+(** Minor blood group systems using unified Antigen type.
 
-Inductive KellAntigen : Type := KellPos | KellNeg | Kpa | Kpb.
-Inductive DuffyAntigen : Type := Fya | Fyb | FyNull.
-Inductive KiddAntigen : Type := Jka | Jkb | JkNull.
-Inductive MNSAntigen : Type := MNS_M | MNS_N | MNS_S | MNS_s.
-Inductive LewisAntigen : Type := Lea | Leb | LeNull.
+    All minor antigens use the unified Antigen type from Section I.
+    No separate KellAntigen, DuffyAntigen, etc. types are needed.
+    This provides:
+    1. Consistency with the core antigen model
+    2. Set-based compatibility checking
+    3. Proper integration with antibody history tracking *)
 
-Record MinorAntigens := mkMinorAntigens {
-  ag_kell : KellAntigen;
-  ag_duffy : DuffyAntigen;
-  ag_kidd : KiddAntigen;
-  ag_mns_M : bool;
-  ag_mns_N : bool;
-  ag_mns_S : bool;
-  ag_mns_s : bool;
-  ag_lewis : LewisAntigen
+(** Extended antigen profile: an individual's full antigen phenotype.
+    Uses the AntigenSet type defined in Section II. *)
+Record ExtendedPhenotype := mkExtendedPhenotype {
+  ep_base_type : BloodType;
+  ep_antigens : AntigenSet
 }.
 
-Definition default_minor_antigens : MinorAntigens :=
-  mkMinorAntigens KellNeg Fyb Jka true false true false Leb.
+(** Build an extended phenotype from base type plus minor antigens *)
+Definition make_extended_phenotype (bt : BloodType) (minor_ags : list Antigen)
+    : ExtendedPhenotype :=
+  mkExtendedPhenotype bt
+    (fun ag => phenotype_antigens bt ag ||
+               existsb (fun ag' => if antigen_eq_dec ag ag' then true else false) minor_ags).
 
-(** Minor antigen presence check using the unified Antigen type.
-    Antibodies are represented by the same Antigen constructor they target,
-    eliminating the need for a separate MinorAntibody type. *)
+(** Common phenotype patterns *)
+Definition phenotype_K_positive (bt : BloodType) : ExtendedPhenotype :=
+  make_extended_phenotype bt [Ag_K].
+
+Definition phenotype_K_negative (bt : BloodType) : ExtendedPhenotype :=
+  make_extended_phenotype bt [Ag_k; Ag_Kpb].
+
+Definition phenotype_Fya_positive (bt : BloodType) : ExtendedPhenotype :=
+  make_extended_phenotype bt [Ag_Fya].
+
+Definition phenotype_Fyb_positive (bt : BloodType) : ExtendedPhenotype :=
+  make_extended_phenotype bt [Ag_Fyb].
+
+Definition phenotype_Fy_null (bt : BloodType) : ExtendedPhenotype :=
+  make_extended_phenotype bt [].
+
+Definition phenotype_Jka_positive (bt : BloodType) : ExtendedPhenotype :=
+  make_extended_phenotype bt [Ag_Jka].
+
+Definition phenotype_Jkb_positive (bt : BloodType) : ExtendedPhenotype :=
+  make_extended_phenotype bt [Ag_Jkb].
+
+(** Minor antigen compatibility using set disjointness.
+    Recipient antibodies (list) must not match donor antigens (set). *)
+Definition minor_antigen_compatible (recipient_antibodies : list Antigen)
+                                    (donor_phenotype : ExtendedPhenotype) : bool :=
+  forallb (fun ab => negb (ep_antigens donor_phenotype ab)) recipient_antibodies.
+
+(** Legacy MinorAntigens record for backward compatibility.
+    DEPRECATED: Use ExtendedPhenotype instead. *)
+Record MinorAntigens := mkMinorAntigens {
+  ma_antigens : list Antigen
+}.
+
+Definition minor_antigens_to_set (ma : MinorAntigens) : AntigenSet :=
+  fun ag => existsb (fun ag' => if antigen_eq_dec ag ag' then true else false)
+                    (ma_antigens ma).
+
 Definition has_minor_antigen_unified (ma : MinorAntigens) (ag : Antigen) : bool :=
-  match ag with
-  | Ag_K => match ag_kell ma with KellPos => true | _ => false end
-  | Ag_Kpa => match ag_kell ma with Kpa => true | _ => false end
-  | Ag_Kpb => match ag_kell ma with Kpb => true | KellNeg => true | _ => false end
-  | Ag_Fya => match ag_duffy ma with Fya => true | _ => false end
-  | Ag_Fyb => match ag_duffy ma with Fyb => true | _ => false end
-  | Ag_Jka => match ag_kidd ma with Jka => true | _ => false end
-  | Ag_Jkb => match ag_kidd ma with Jkb => true | _ => false end
-  | Ag_M => ag_mns_M ma
-  | Ag_N => ag_mns_N ma
-  | Ag_S => ag_mns_S ma
-  | Ag_s => ag_mns_s ma
-  | Ag_Lea => match ag_lewis ma with Lea => true | _ => false end
-  | Ag_Leb => match ag_lewis ma with Leb => true | _ => false end
-  | _ => false
-  end.
+  minor_antigens_to_set ma ag.
 
 Definition minor_antigen_compatible_unified (recipient_abs : list Antigen)
                                             (donor_ags : MinorAntigens) : bool :=
   forallb (fun ag => negb (has_minor_antigen_unified donor_ags ag)) recipient_abs.
 
-(** Duffy null compatibility: Duffy null individuals (Fy(a-b-)) can receive
-    blood from any Duffy phenotype since they lack Duffy antigens entirely
-    and cannot form anti-Fya or anti-Fyb naturally. They are universal
-    recipients for the Duffy system. *)
-Definition is_duffy_null (ma : MinorAntigens) : bool :=
-  match ag_duffy ma with FyNull => true | _ => false end.
+Definition default_minor_antigens : MinorAntigens :=
+  mkMinorAntigens [Ag_k; Ag_Kpb; Ag_Fyb; Ag_Jka; Ag_M; Ag_S; Ag_Leb].
 
-Definition duffy_compatible (recipient_duffy donor_duffy : DuffyAntigen)
-                            (recipient_has_anti_fya recipient_has_anti_fyb : bool) : bool :=
-  match recipient_duffy with
-  | FyNull => true
-  | _ =>
-      let donor_has_fya := match donor_duffy with Fya => true | _ => false end in
-      let donor_has_fyb := match donor_duffy with Fyb => true | _ => false end in
-      negb (recipient_has_anti_fya && donor_has_fya) &&
-      negb (recipient_has_anti_fyb && donor_has_fyb)
-  end.
+(** Duffy null phenotype modeling.
+    Duffy null individuals (Fy(a-b-)) lack both Fya and Fyb antigens.
 
-Theorem duffy_null_universal_recipient : forall donor anti_a anti_b,
-  duffy_compatible FyNull donor anti_a anti_b = true.
-Proof. intros [| | ]; reflexivity. Qed.
+    IMPORTANT: Duffy null does NOT mean "universal recipient" for Duffy.
+    While they cannot form anti-Fya or anti-Fyb naturally (no antigen exposure),
+    they CAN become alloimmunized after transfusion with Fy(a+) or Fy(b+) blood.
+    The "universal recipient" claim is FALSE for alloimmunized individuals. *)
+Definition is_duffy_null (ep : ExtendedPhenotype) : bool :=
+  negb (ep_antigens ep Ag_Fya) && negb (ep_antigens ep Ag_Fyb).
 
-Definition kell_immunogenicity : nat := 5.
-Definition duffy_immunogenicity : nat := 20.
-Definition kidd_immunogenicity : nat := 50.
+(** Duffy compatibility with proper alloimmunization modeling.
+    recipient_abs contains any anti-Fya or anti-Fyb the recipient has formed. *)
+Definition duffy_compatible_correct (recipient_abs : list Antigen)
+                                    (donor_ep : ExtendedPhenotype) : bool :=
+  let fya_safe := negb (existsb (fun ag => if antigen_eq_dec ag Ag_Fya then true else false)
+                                recipient_abs && ep_antigens donor_ep Ag_Fya) in
+  let fyb_safe := negb (existsb (fun ag => if antigen_eq_dec ag Ag_Fyb then true else false)
+                                recipient_abs && ep_antigens donor_ep Ag_Fyb) in
+  fya_safe && fyb_safe.
 
-Theorem kell_most_immunogenic_minor :
-  kell_immunogenicity < duffy_immunogenicity /\
-  duffy_immunogenicity < kidd_immunogenicity.
-Proof. unfold kell_immunogenicity, duffy_immunogenicity, kidd_immunogenicity; lia. Qed.
+(** Duffy null without alloimmunization is compatible with any donor *)
+Theorem duffy_null_naive_compatible : forall donor_ep,
+  duffy_compatible_correct [] donor_ep = true.
+Proof. intros; reflexivity. Qed.
+
+(** But alloimmunized Duffy null is NOT universally compatible *)
+Theorem duffy_null_alloimmunized_not_universal :
+  duffy_compatible_correct [Ag_Fya] (phenotype_Fya_positive O_neg) = false.
+Proof. reflexivity. Qed.
+
+(** Immunogenicity values: percentage of individuals who form antibody after
+    single antigen-positive transfusion. Based on literature:
+    - K (Kell): ~5% - highly immunogenic, second only to D
+    - Fya (Duffy): ~0.1% - low immunogenicity
+    - Jka (Kidd): ~0.07% - low but clinically significant due to evanescence
+
+    Source: Tormey & Stack, Transfusion 2019; Verduin et al., Vox Sanguinis 2015 *)
+Definition immunogenicity_K_percent : nat := 5.
+Definition immunogenicity_Fya_percent_x100 : nat := 10.
+Definition immunogenicity_Jka_percent_x100 : nat := 7.
+
+(** Kell is the most immunogenic minor antigen (after D) *)
+Theorem kell_highly_immunogenic :
+  immunogenicity_K_percent >= 5.
+Proof. unfold immunogenicity_K_percent; lia. Qed.
 
 (** Duffy null phenotype and malaria resistance:
     The Fy(a-b-) phenotype, common in African populations (~70%), confers
@@ -2116,6 +2575,70 @@ Theorem reactivation_makes_detectable : forall ab,
 Proof.
   intros ab. unfold reactivate_on_exposure.
   destruct (ab_status ab); reflexivity.
+Qed.
+
+(** Immune history: collection of antibody records *)
+Definition ImmuneHistory := list AntibodyRecord.
+
+(** Extract clinically significant antibodies from immune history *)
+Definition significant_antibodies (hist : ImmuneHistory) : list Antigen :=
+  map ab_antigen (filter antibody_clinically_significant hist).
+
+(** Check if donor has any antigen matching recipient's significant antibodies *)
+Definition history_compatible (hist : ImmuneHistory) (donor_ags : AntigenSet) : bool :=
+  forallb (fun ag => negb (donor_ags ag)) (significant_antibodies hist).
+
+(** Predict transfusion outcome based on immune history *)
+Inductive TransfusionOutcome : Type :=
+  | Outcome_Safe
+  | Outcome_Immediate_Reaction
+  | Outcome_Delayed_Reaction
+  | Outcome_Anamnestic_Response.
+
+Definition predict_outcome (hist : ImmuneHistory) (donor_ags : AntigenSet) : TransfusionOutcome :=
+  let sig_abs := filter antibody_clinically_significant hist in
+  let matching := filter (fun ab => donor_ags (ab_antigen ab)) sig_abs in
+  match matching with
+  | [] => Outcome_Safe
+  | ab :: _ =>
+      match ab_status ab with
+      | Detectable => Outcome_Immediate_Reaction
+      | Evanescent => Outcome_Anamnestic_Response
+      | Historical => Outcome_Delayed_Reaction
+      end
+  end.
+
+Theorem no_history_is_safe : forall donor_ags,
+  predict_outcome [] donor_ags = Outcome_Safe.
+Proof. reflexivity. Qed.
+
+Theorem detectable_ab_causes_immediate : forall ag donor_ags rest,
+  donor_ags ag = true ->
+  let ab := mkAntibodyRecord ag Detectable 0 1 in
+  predict_outcome (ab :: rest) donor_ags = Outcome_Immediate_Reaction.
+Proof.
+  intros ag donor_ags rest Hag.
+  unfold predict_outcome, antibody_clinically_significant. simpl.
+  rewrite Hag. reflexivity.
+Qed.
+
+(** Link antibody history to transfusion decision *)
+Definition transfusion_decision_with_history
+    (recipient donor : BloodType)
+    (hist : ImmuneHistory)
+    (donor_minor_ags : AntigenSet) : bool * TransfusionOutcome :=
+  let base_compat := compatible recipient donor in
+  let minor_compat := history_compatible hist donor_minor_ags in
+  let outcome := predict_outcome hist donor_minor_ags in
+  (base_compat && minor_compat, outcome).
+
+Theorem compatible_with_empty_history : forall r d donor_ags,
+  compatible r d = true ->
+  fst (transfusion_decision_with_history r d [] donor_ags) = true.
+Proof.
+  intros r d donor_ags H.
+  unfold transfusion_decision_with_history, history_compatible, significant_antibodies.
+  simpl. rewrite H. reflexivity.
 Qed.
 
 Theorem minor_compatible_unified_empty_abs : forall donor_ags,
@@ -2685,9 +3208,9 @@ Proof. intros [[| | | ] [| ]]; unfold vulnerability, count_donors; simpl; lia. Q
 
 Definition phenotypic_blood_type (r : Recipient) : BloodType :=
   let abo := match rcpt_subtype r with
-             | Sub_A1 | Sub_A2 | Sub_A3 | Sub_Aint => A
+             | Sub_A1 | Sub_A2 | Sub_A3 | Sub_Aint | Sub_Acquired_B => A
              | Sub_B => B
-             | Sub_A1B | Sub_A2B => AB
+             | Sub_A1B | Sub_A2B | Sub_Cis_AB => AB
              | Sub_O | Sub_Bombay => O
              end in
   let rh := variant_transfusion_type (rcpt_rh_variant r) in
@@ -2703,21 +3226,24 @@ Definition recipient_blood_type (r : Recipient) : BloodType :=
   phenotypic_blood_type r.
 
 (** Unified compatibility check for Recipient against BloodType.
-    Reuses core compatible function and adds sensitization/childbearing logic.
+    Uses separated ABO and Rh compatibility:
+    - ABO: Always checked (natural isoagglutinins)
+    - Rh: Depends on sensitization status and childbearing potential
 
-    CRITICAL: Bombay recipients can ONLY receive Bombay blood.
+    Bombay recipients can ONLY receive Bombay blood.
     Standard O-negative blood contains H antigen which Bombay recipients
     will react against with their anti-H antibodies. *)
 Definition recipient_compatible_with_bt (r : Recipient) (d : BloodType) : bool :=
   if recipient_is_bombay r then false
   else
-    let base_compat := compatible (recipient_blood_type r) d in
-    let rh_ok := match rcpt_sensitized r, snd (recipient_blood_type r), snd d with
-                 | Naive, Neg, Pos => negb (rcpt_female_childbearing r)
-                 | Sensitized, Neg, Pos => false
-                 | _, _, _ => true
-                 end in
-    base_compat && rh_ok.
+    let r_bt := recipient_blood_type r in
+    let abo_compat := rbc_compatible_abo r_bt d in
+    let rh_compat := match rcpt_sensitized r, snd r_bt, snd d with
+                     | Naive, Neg, Pos => negb (rcpt_female_childbearing r)
+                     | Sensitized, Neg, Pos => false
+                     | _, _, _ => true
+                     end in
+    abo_compat && rh_compat.
 
 (** Bombay-to-Bombay compatibility using subtype-level matching *)
 Definition bombay_compatible (r_sub d_sub : ABOSubtype) (r_rh d_rh : Rh) : bool :=
@@ -2745,18 +3271,18 @@ Proof.
   intros r bt H. unfold recipient_compatible_with_bt. rewrite H. reflexivity.
 Qed.
 
-Theorem non_bombay_uses_standard_compat :
+Theorem non_bombay_uses_abo_compat :
   forall r d, recipient_is_bombay r = false ->
   recipient_compatible_with_bt r d = true ->
-  compatible (recipient_blood_type r) d = true.
+  rbc_compatible_abo (recipient_blood_type r) d = true.
 Proof.
   intros r d Hnb H. unfold recipient_compatible_with_bt in H. rewrite Hnb in H.
   apply andb_prop in H. destruct H. exact H.
 Qed.
 
-Theorem recipient_compatible_implies_base_compatible : forall r d,
+Theorem recipient_compatible_implies_abo_compatible : forall r d,
   recipient_compatible_with_bt r d = true ->
-  compatible (recipient_blood_type r) d = true.
+  rbc_compatible_abo (recipient_blood_type r) d = true.
 Proof.
   intros r d H. unfold recipient_compatible_with_bt in H.
   destruct (recipient_is_bombay r) eqn:Hb.
@@ -2764,16 +3290,24 @@ Proof.
   - apply andb_prop in H. destruct H. exact H.
 Qed.
 
-(** Note: These theorems test the extended logic for Rh-negative recipients.
-    When a naive Rh-negative recipient who is not a childbearing female receives
-    Rh-positive blood, the base ABO compatibility passes but Rh fails initially.
-    The extended logic allows this for naive non-childbearing recipients.
-    Since recipient_blood_type derives (abo, Neg) for Rh_Normal_Neg, and compatible
-    (abo, Neg) (abo, Pos) = false for the Rh component, we need to verify
-    the extended semantics work correctly. *)
+(** Naive non-childbearing Rh-negative CAN receive same-ABO Rh-positive.
+    ABO compatibility is checked separately from Rh sensitization status. *)
+Theorem naive_non_childbearing_can_receive_pos :
+  let r := mkRecipient Sub_A1 Rh_Normal_Neg Naive [] false in
+  recipient_compatible_with_bt r (A, Pos) = true.
+Proof. reflexivity. Qed.
 
-Theorem naive_neg_base_incompatible : forall abo,
+Theorem naive_non_childbearing_can_receive_pos_O :
+  let r := mkRecipient Sub_O Rh_Normal_Neg Naive [] false in
+  recipient_compatible_with_bt r (O, Pos) = true.
+Proof. reflexivity. Qed.
+
+Theorem naive_neg_base_incompatible_conservative : forall abo,
   compatible (abo, Neg) (abo, Pos) = false.
+Proof. intros [| | | ]; reflexivity. Qed.
+
+Theorem naive_neg_abo_compatible : forall abo,
+  rbc_compatible_abo (abo, Neg) (abo, Pos) = true.
 Proof. intros [| | | ]; reflexivity. Qed.
 
 Theorem sensitized_cannot_receive_pos : forall sub d_abo,
@@ -2831,6 +3365,42 @@ Definition make_full_decision (recipient donor : BloodType)
     (screen_to_crossmatch screen)
     (allocation_score recipient donor)
     [].
+
+(** Extended record including DAT and AIHA classification *)
+Record FullTransfusionDecisionWithDAT := mkFullDecisionDAT {
+  ftdd_base : FullTransfusionDecision;
+  ftdd_dat_result : DATResult;
+  ftdd_aiha_type : AIHAType;
+  ftdd_crossmatch_difficulty : nat;
+  ftdd_needs_adsorption : bool
+}.
+
+Definition make_full_decision_with_dat (recipient donor : BloodType)
+                                       (screen : AntibodyScreenResult)
+                                       (inv : Inventory)
+                                       (dat : DATProfile) : FullTransfusionDecisionWithDAT :=
+  mkFullDecisionDAT
+    (make_full_decision recipient donor screen inv)
+    (dat_result dat)
+    (classify_aiha dat)
+    (crossmatch_difficulty dat)
+    (needs_adsorption_study dat).
+
+Definition full_decision_with_dat_safe (d : FullTransfusionDecisionWithDAT) : bool :=
+  ftd_compatible (ftdd_base d) &&
+  match ftd_severity (ftdd_base d) with Safe => true | _ => false end &&
+  match ftdd_aiha_type d with
+  | AIHA_None => true
+  | AIHA_Cold => true
+  | _ => false
+  end.
+
+Theorem dat_negative_decision_matches_base : forall r d s i,
+  let dat := mkDATProfile DAT_Negative None None None in
+  let dec_dat := make_full_decision_with_dat r d s i dat in
+  ftdd_aiha_type dec_dat = AIHA_None /\
+  ftdd_crossmatch_difficulty dec_dat = 0.
+Proof. intros; split; reflexivity. Qed.
 
 Definition full_decision_safe (d : FullTransfusionDecision) : bool :=
   ftd_compatible d &&
@@ -3147,7 +3717,7 @@ Qed.
 Theorem bombay_only_receives_bombay : forall donor,
   donor <> Sub_Bombay -> subtype_compatible Sub_Bombay donor = false.
 Proof.
-  intros [| | | | | | | | ] H; try reflexivity; exfalso; apply H; reflexivity.
+  intros [| | | | | | | | | | ] H; try reflexivity; exfalso; apply H; reflexivity.
 Qed.
 
 Theorem bombay_self_compatible :
@@ -3300,7 +3870,7 @@ Extraction "transfusion_v2.ml"
   allocation_score triage_total_allocated shortage_triage_bounded
   MinorAntigens has_minor_antigen_unified minor_antigen_compatible_unified
   full_compatible_unified
-  is_duffy_null duffy_compatible
+  is_duffy_null duffy_compatible_correct
   duffy_null_malaria_resistance_prevalence_africa
   AntibodyStatus AntibodyRecord is_kidd_antigen
   update_antibody_status reactivate_on_exposure antibody_clinically_significant
