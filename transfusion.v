@@ -2071,7 +2071,10 @@ Proof.
   exfalso; apply H; reflexivity.
 Qed.
 
-(** Exactly 4 plasma-incompatible pairs per O donor variant *)
+(** O plasma incompatibility: O plasma contains both anti-A and anti-B antibodies,
+    making it incompatible with recipients who have A or B antigens (A, B, or AB types).
+    This results in 6 incompatible recipient types: A+, A-, B+, B-, AB+, AB-.
+    Only O+ and O- recipients can safely receive O plasma. *)
 Theorem O_plasma_incompatible_count :
   length (filter (fun r => negb (plasma_compatible r O_pos)) all_blood_types) = 6.
 Proof. reflexivity. Qed.
@@ -4281,21 +4284,43 @@ Definition pop_rh_pos_sum (pop : Population) : nat :=
   pop_frequency pop (O, Pos) + pop_frequency pop (A, Pos) +
   pop_frequency pop (B, Pos) + pop_frequency pop (AB, Pos).
 
-(** Q-based population frequencies - connects nat-scaled to exact rationals *)
+(** Q-based population frequencies - connects nat-scaled to exact rationals.
+
+    IMPORTANT: These functions divide by the ACTUAL population sum (pop_sum),
+    not a fixed constant. This ensures frequencies always sum to exactly 1,
+    even for populations with minor rounding discrepancies in source data.
+
+    Design rationale:
+    - Population data comes from various sources with different rounding conventions
+    - Some populations sum to 999, 1000, 1001, etc.
+    - Dividing by actual sum normalizes all populations to true proportions
+    - This is mathematically correct and avoids subtle errors in calculations *)
 Open Scope Q_scope.
 
 Definition pop_frequency_Q (pop : Population) (bt : BloodType) : Q :=
-  inject_Z (Z.of_nat (pop_frequency pop bt)) / 1000.
+  let raw := inject_Z (Z.of_nat (pop_frequency pop bt)) in
+  let total := inject_Z (Z.of_nat (pop_sum pop)) in
+  raw / total.
 
 (** Population-specific Rh-negative frequency as a rational.
     Derived from actual population data, not Hardy-Weinberg assumptions.
-    This accurately reflects observed Rh distribution in each population. *)
+    This accurately reflects observed Rh distribution in each population.
+    Divides by actual population sum to ensure Rh+ and Rh- frequencies sum to 1. *)
 Definition pop_rh_neg_freq_Q (pop : Population) : Q :=
-  inject_Z (Z.of_nat (pop_rh_neg_sum pop)) / 1000.
+  let rh_neg := inject_Z (Z.of_nat (pop_rh_neg_sum pop)) in
+  let total := inject_Z (Z.of_nat (pop_sum pop)) in
+  rh_neg / total.
 
 (** Population-specific Rh-positive frequency *)
 Definition pop_rh_pos_freq_Q (pop : Population) : Q :=
   1 - pop_rh_neg_freq_Q pop.
+
+(** Theorem: Rh frequencies sum to exactly 1 for all populations *)
+Theorem rh_frequencies_sum_to_1 : forall pop,
+  pop_rh_neg_freq_Q pop + pop_rh_pos_freq_Q pop == 1.
+Proof.
+  intro pop. unfold pop_rh_pos_freq_Q. ring.
+Qed.
 
 (** Rational square root approximation using Newton-Raphson iteration.
     Given x and an initial guess g, computes: g' = (g + x/g) / 2
@@ -4890,6 +4915,306 @@ Proof.
   simpl. rewrite andb_true_r. reflexivity.
 Qed.
 
+(** ========== COLD AGGLUTININ DISEASE (CAD) ========== *)
+
+(** Cold Agglutinin Disease is a form of autoimmune hemolytic anemia caused by
+    IgM autoantibodies that bind red blood cells at low temperatures (typically
+    below 30°C) and cause complement-mediated hemolysis upon warming.
+
+    CITATIONS:
+    - Berentsen S. Cold agglutinin disease. Hematology Am Soc Hematol Educ Program
+      2016;2016(1):226-231. PMID: 27913484
+    - Berentsen S, Tjønnfjord GE. Diagnosis and treatment of cold agglutinin
+      mediated autoimmune hemolytic anemia. Blood Rev 2012;26:107-115.
+    - Swiecicki PL, Hegerova LT, Gertz MA. Cold agglutinin disease.
+      Blood 2013;122:1114-1121. PMID: 23757733
+
+    Clinical significance for transfusion:
+    - Cold agglutinins interfere with blood typing and crossmatching
+    - Can cause visible agglutination of blood samples at room temperature
+    - Transfusion requires blood warmers to prevent hemolysis
+    - Pre-warming patient samples is essential for accurate typing
+    - Anti-I specificity is most common (reacts with adult RBCs)
+    - Anti-i specificity seen in infectious mononucleosis (reacts stronger with cord RBCs)
+
+    Thermal amplitude: The highest temperature at which the antibody causes
+    agglutination. Clinically significant CAD typically has thermal amplitude
+    ≥30°C. Antibodies reactive only below 22°C are usually benign. *)
+
+(** Thermal amplitude classification - determines clinical significance *)
+Inductive ThermalAmplitude : Type :=
+  | TA_Below_4C
+  | TA_4C_to_22C
+  | TA_22C_to_30C
+  | TA_Above_30C.
+
+(** Cold agglutinin titer - expressed as highest dilution showing agglutination *)
+Inductive ColdAgglutininTiter : Type :=
+  | CA_Titer_Low        (** < 64: usually clinically insignificant *)
+  | CA_Titer_Moderate   (** 64-512: may be significant if high thermal amplitude *)
+  | CA_Titer_High       (** 512-4096: clinically significant *)
+  | CA_Titer_VeryHigh.  (** > 4096: severe CAD *)
+
+(** Cold agglutinin specificity *)
+Inductive ColdAgglutininSpecificity : Type :=
+  | CA_Anti_I           (** Most common in primary CAD, reacts with adult RBCs *)
+  | CA_Anti_i           (** Infectious mononucleosis, reacts with cord/fetal RBCs *)
+  | CA_Anti_Pr          (** Rare, related to protease-sensitive antigens *)
+  | CA_Anti_M           (** M antigen, cold-reactive form *)
+  | CA_Anti_P           (** P antigen system, paroxysmal cold hemoglobinuria *)
+  | CA_Other_Cold.
+
+(** Etiology of cold agglutinin syndrome *)
+Inductive CADEtiology : Type :=
+  | CAD_Primary         (** Primary/idiopathic - clonal B-cell disorder *)
+  | CAD_Secondary_Lymphoma  (** Associated with lymphoproliferative disorder *)
+  | CAD_Secondary_Infection (** Post-infectious: Mycoplasma, EBV, CMV *)
+  | CAD_Secondary_Autoimmune. (** Associated with other autoimmune disease *)
+
+(** Comprehensive Cold Agglutinin Disease profile *)
+Record ColdAgglutininProfile := mkCADProfile {
+  cad_titer : ColdAgglutininTiter;
+  cad_thermal_amplitude : ThermalAmplitude;
+  cad_specificity : ColdAgglutininSpecificity;
+  cad_etiology : CADEtiology;
+  cad_hemoglobin_g_dL : nat;        (** Current hemoglobin level *)
+  cad_reticulocyte_percent : nat;   (** Reticulocyte count *)
+  cad_ldh_elevated : bool;          (** LDH elevation indicates active hemolysis *)
+  cad_haptoglobin_low : bool        (** Low haptoglobin indicates intravascular hemolysis *)
+}.
+
+(** Is the cold agglutinin clinically significant?
+    Based on thermal amplitude and titer together *)
+Definition cad_clinically_significant (p : ColdAgglutininProfile) : bool :=
+  match cad_thermal_amplitude p, cad_titer p with
+  | TA_Above_30C, _ => true
+  | TA_22C_to_30C, CA_Titer_High => true
+  | TA_22C_to_30C, CA_Titer_VeryHigh => true
+  | _, CA_Titer_VeryHigh => true
+  | _, _ => false
+  end.
+
+(** Is there evidence of active hemolysis? *)
+Definition cad_active_hemolysis (p : ColdAgglutininProfile) : bool :=
+  cad_ldh_elevated p || cad_haptoglobin_low p ||
+  Nat.ltb (cad_hemoglobin_g_dL p) 10 ||
+  Nat.ltb 2 (cad_reticulocyte_percent p).
+
+(** CAD severity classification for transfusion planning *)
+Inductive CADSeverity : Type :=
+  | CAD_Severity_None       (** No CAD or clinically insignificant *)
+  | CAD_Severity_Mild       (** Significant but compensated *)
+  | CAD_Severity_Moderate   (** Active hemolysis, Hgb 8-10 g/dL *)
+  | CAD_Severity_Severe.    (** Severe hemolysis, Hgb < 8 g/dL *)
+
+Definition classify_cad_severity (p : ColdAgglutininProfile) : CADSeverity :=
+  if negb (cad_clinically_significant p) then CAD_Severity_None
+  else if Nat.ltb (cad_hemoglobin_g_dL p) 8 then CAD_Severity_Severe
+  else if Nat.ltb (cad_hemoglobin_g_dL p) 10 then CAD_Severity_Moderate
+  else if cad_active_hemolysis p then CAD_Severity_Mild
+  else CAD_Severity_Mild.
+
+(** ========== CAD TRANSFUSION REQUIREMENTS ========== *)
+
+(** Blood warmer requirement based on CAD profile.
+    CRITICAL: Patients with clinically significant CAD MUST have blood
+    warmed to 37°C during transfusion to prevent agglutination and hemolysis.
+
+    Blood warmer devices:
+    - Inline warmers (e.g., Ranger, Level 1) warm to 37-42°C
+    - Must be FDA-cleared for blood/blood products
+    - Flow rate affects warming efficiency
+    - Temperature monitoring required *)
+Inductive BloodWarmerRequirement : Type :=
+  | Warmer_NotRequired
+  | Warmer_Recommended   (** For borderline cases *)
+  | Warmer_Mandatory.    (** Must use warmer, document in chart *)
+
+Definition cad_blood_warmer_requirement (p : ColdAgglutininProfile) : BloodWarmerRequirement :=
+  match cad_thermal_amplitude p, cad_titer p with
+  | TA_Above_30C, _ => Warmer_Mandatory
+  | TA_22C_to_30C, CA_Titer_High => Warmer_Mandatory
+  | TA_22C_to_30C, CA_Titer_VeryHigh => Warmer_Mandatory
+  | TA_22C_to_30C, CA_Titer_Moderate => Warmer_Recommended
+  | TA_4C_to_22C, CA_Titer_VeryHigh => Warmer_Recommended
+  | _, _ => Warmer_NotRequired
+  end.
+
+(** Sample handling requirements for accurate typing *)
+Inductive SampleHandling : Type :=
+  | Sample_Standard
+  | Sample_PreWarm_37C        (** Pre-warm sample before testing *)
+  | Sample_WarmWash           (** Use warm saline for washing *)
+  | Sample_PreWarm_And_Wash.  (** Both pre-warming and warm wash required *)
+
+Definition cad_sample_handling (p : ColdAgglutininProfile) : SampleHandling :=
+  match cad_thermal_amplitude p, cad_titer p with
+  | TA_Above_30C, CA_Titer_VeryHigh => Sample_PreWarm_And_Wash
+  | TA_Above_30C, _ => Sample_PreWarm_37C
+  | TA_22C_to_30C, CA_Titer_VeryHigh => Sample_PreWarm_And_Wash
+  | TA_22C_to_30C, CA_Titer_High => Sample_PreWarm_37C
+  | TA_22C_to_30C, _ => Sample_WarmWash
+  | _, CA_Titer_VeryHigh => Sample_WarmWash
+  | _, _ => Sample_Standard
+  end.
+
+(** Room temperature storage concern: should blood be kept in warmer until infusion? *)
+Definition cad_avoid_room_temp_storage (p : ColdAgglutininProfile) : bool :=
+  match cad_thermal_amplitude p with
+  | TA_Above_30C => true
+  | TA_22C_to_30C => true
+  | _ => false
+  end.
+
+(** Comprehensive CAD transfusion protocol *)
+Record CADTransfusionProtocol := mkCADProtocol {
+  cad_proto_warmer : BloodWarmerRequirement;
+  cad_proto_sample : SampleHandling;
+  cad_proto_avoid_room_temp : bool;
+  cad_proto_slow_infusion : bool;  (** Slower infusion allows better warming *)
+  cad_proto_monitor_temp : bool    (** Monitor patient temperature during transfusion *)
+}.
+
+Definition generate_cad_protocol (p : ColdAgglutininProfile) : CADTransfusionProtocol :=
+  let severity := classify_cad_severity p in
+  mkCADProtocol
+    (cad_blood_warmer_requirement p)
+    (cad_sample_handling p)
+    (cad_avoid_room_temp_storage p)
+    (match severity with
+     | CAD_Severity_Severe | CAD_Severity_Moderate => true
+     | _ => false
+     end)
+    (match severity with
+     | CAD_Severity_Severe => true
+     | _ => false
+     end).
+
+(** ========== CAD THEOREMS ========== *)
+
+(** High thermal amplitude always requires blood warmer *)
+Theorem high_thermal_amplitude_requires_warmer : forall p,
+  cad_thermal_amplitude p = TA_Above_30C ->
+  cad_blood_warmer_requirement p = Warmer_Mandatory.
+Proof.
+  intros p H. unfold cad_blood_warmer_requirement. rewrite H. reflexivity.
+Qed.
+
+(** Very high titer with moderate thermal amplitude requires warmer *)
+Theorem very_high_titer_moderate_ta_requires_warmer : forall p,
+  cad_thermal_amplitude p = TA_22C_to_30C ->
+  cad_titer p = CA_Titer_VeryHigh ->
+  cad_blood_warmer_requirement p = Warmer_Mandatory.
+Proof.
+  intros p Hta Htiter. unfold cad_blood_warmer_requirement.
+  rewrite Hta, Htiter. reflexivity.
+Qed.
+
+(** Low thermal amplitude with low titer is not clinically significant *)
+Theorem low_ta_low_titer_not_significant : forall p,
+  cad_thermal_amplitude p = TA_4C_to_22C ->
+  cad_titer p = CA_Titer_Low ->
+  cad_clinically_significant p = false.
+Proof.
+  intros p Hta Htiter. unfold cad_clinically_significant.
+  rewrite Hta, Htiter. reflexivity.
+Qed.
+
+(** Clinically insignificant CAD does not require warmer *)
+Theorem insignificant_cad_no_warmer : forall p,
+  cad_thermal_amplitude p = TA_Below_4C ->
+  cad_titer p = CA_Titer_Low ->
+  cad_blood_warmer_requirement p = Warmer_NotRequired.
+Proof.
+  intros p Hta Htiter. unfold cad_blood_warmer_requirement.
+  rewrite Hta. reflexivity.
+Qed.
+
+(** Severe anemia with CAD requires slow infusion *)
+Theorem severe_cad_slow_infusion : forall p,
+  cad_clinically_significant p = true ->
+  cad_hemoglobin_g_dL p < 8 ->
+  cad_proto_slow_infusion (generate_cad_protocol p) = true.
+Proof.
+  intros p Hsig Hhgb.
+  unfold generate_cad_protocol, classify_cad_severity.
+  rewrite Hsig. simpl.
+  destruct (Nat.ltb (cad_hemoglobin_g_dL p) 8) eqn:Hlt.
+  - reflexivity.
+  - apply Nat.ltb_nlt in Hlt. lia.
+Qed.
+
+(** Standard sample handling when no CAD *)
+Theorem no_cad_standard_sample : forall titer etio hgb retic ldh hapto,
+  cad_sample_handling (mkCADProfile titer TA_Below_4C CA_Anti_I etio hgb retic ldh hapto) =
+    match titer with
+    | CA_Titer_VeryHigh => Sample_WarmWash
+    | _ => Sample_Standard
+    end.
+Proof.
+  intros. unfold cad_sample_handling. simpl. destruct titer; reflexivity.
+Qed.
+
+(** Example: Severe primary CAD case *)
+Definition severe_cad_example : ColdAgglutininProfile :=
+  mkCADProfile CA_Titer_VeryHigh TA_Above_30C CA_Anti_I CAD_Primary 7 5 true true.
+
+Theorem severe_cad_example_significant :
+  cad_clinically_significant severe_cad_example = true.
+Proof. reflexivity. Qed.
+
+Theorem severe_cad_example_requires_warmer :
+  cad_blood_warmer_requirement severe_cad_example = Warmer_Mandatory.
+Proof. reflexivity. Qed.
+
+Theorem severe_cad_example_prewarm_wash :
+  cad_sample_handling severe_cad_example = Sample_PreWarm_And_Wash.
+Proof. reflexivity. Qed.
+
+(** Example: Benign cold agglutinin (incidental finding) *)
+Definition benign_cold_agglutinin : ColdAgglutininProfile :=
+  mkCADProfile CA_Titer_Low TA_4C_to_22C CA_Anti_I CAD_Secondary_Infection 13 1 false false.
+
+Theorem benign_ca_not_significant :
+  cad_clinically_significant benign_cold_agglutinin = false.
+Proof. reflexivity. Qed.
+
+Theorem benign_ca_no_warmer :
+  cad_blood_warmer_requirement benign_cold_agglutinin = Warmer_NotRequired.
+Proof. reflexivity. Qed.
+
+(** Integration: CAD affects transfusion safety determination *)
+Definition transfusion_safe_with_cad (r : Recipient) (d : Donor)
+                                      (cad : ColdAgglutininProfile)
+                                      (warmer_available : bool) : bool :=
+  let base_compat := extended_compatible r d in
+  let warmer_req := cad_blood_warmer_requirement cad in
+  let warmer_ok := match warmer_req with
+                   | Warmer_NotRequired => true
+                   | Warmer_Recommended => true
+                   | Warmer_Mandatory => warmer_available
+                   end in
+  base_compat && warmer_ok.
+
+(** Without warmer, mandatory CAD cases cannot be safely transfused *)
+Theorem mandatory_warmer_blocks_transfusion : forall r d cad,
+  cad_blood_warmer_requirement cad = Warmer_Mandatory ->
+  transfusion_safe_with_cad r d cad false = false.
+Proof.
+  intros r d cad H.
+  unfold transfusion_safe_with_cad. rewrite H.
+  rewrite andb_false_r. reflexivity.
+Qed.
+
+(** With warmer, compatibility depends only on blood type matching *)
+Theorem warmer_enables_transfusion : forall r d cad,
+  transfusion_safe_with_cad r d cad true = extended_compatible r d.
+Proof.
+  intros r d cad.
+  unfold transfusion_safe_with_cad.
+  destruct (cad_blood_warmer_requirement cad); simpl; rewrite andb_true_r; reflexivity.
+Qed.
+
 (** ========== CHIMERISM MODEL ========== *)
 
 (** Chimerism occurs when a person has cells from two genetically distinct individuals.
@@ -5002,131 +5327,6 @@ Theorem full_engraftment_uses_donor_type :
   forall host_bt donor_bt days,
   let p := mkChimericPatient TransplantChimerism Full host_bt donor_bt days in
   chimeric_transfusion_type p = donor_bt.
-Proof. reflexivity. Qed.
-
-(** ========== COLD AGGLUTININ DISEASE (CAD) MODEL ========== *)
-
-(** Cold agglutinin disease is characterized by IgM autoantibodies that bind
-    RBCs at temperatures below 37°C, fixing complement and causing hemolysis.
-
-    Key parameters:
-    - Thermal amplitude: highest temperature at which antibody reacts
-      (clinically significant if >= 30°C)
-    - Titer: dilution at which agglutination is still visible (e.g., 1:512)
-      Higher titers correlate with clinical severity
-    - Specificity: usually anti-I (adults), anti-i (children/lymphoma)
-
-    Transfusion considerations:
-    - Blood warmer MANDATORY to prevent in vivo agglutination
-    - Avoid cooling patient during surgery
-    - Crossmatch at 37°C to avoid false positives
-    - Low-titer cold agglutinins are usually benign *)
-
-Record ColdAgglutininProfile := mkCADProfile {
-  cad_titer : nat;                    (** Reciprocal, e.g., 512 for 1:512 *)
-  cad_thermal_amplitude : nat;        (** Highest reactive temp in Celsius *)
-  cad_specificity : Antigen;          (** Usually Ag_I or Ag_i *)
-  cad_complement_activation : bool;   (** C3 fixation observed *)
-  cad_hemolysis_present : bool
-}.
-
-(** Titer thresholds based on clinical significance *)
-Definition cad_titer_low : nat := 64.
-Definition cad_titer_moderate : nat := 256.
-Definition cad_titer_high : nat := 1024.
-Definition cad_titer_critical : nat := 4096.
-
-(** Thermal amplitude threshold for clinical significance *)
-Definition cad_thermal_threshold : nat := 30.
-
-Inductive CADSeverity : Type :=
-  | CAD_Benign           (** Low titer, low thermal amplitude *)
-  | CAD_Mild             (** Moderate titer, may need precautions *)
-  | CAD_Moderate         (** High titer or high thermal amplitude *)
-  | CAD_Severe           (** High titer AND high thermal amplitude *)
-  | CAD_Critical.        (** Active hemolysis, life-threatening *)
-
-Definition classify_cad_severity (c : ColdAgglutininProfile) : CADSeverity :=
-  let high_thermal := Nat.leb cad_thermal_threshold (cad_thermal_amplitude c) in
-  let titer := cad_titer c in
-  if cad_hemolysis_present c then CAD_Critical
-  else if Nat.leb cad_titer_critical titer then
-    if high_thermal then CAD_Critical else CAD_Severe
-  else if Nat.leb cad_titer_high titer then
-    if high_thermal then CAD_Severe else CAD_Moderate
-  else if Nat.leb cad_titer_moderate titer then
-    if high_thermal then CAD_Moderate else CAD_Mild
-  else if Nat.leb cad_titer_low titer then
-    if high_thermal then CAD_Mild else CAD_Benign
-  else CAD_Benign.
-
-(** Transfusion requirements for cold agglutinin patients *)
-Record CADTransfusionRequirements := mkCADReq {
-  cad_req_blood_warmer : bool;
-  cad_req_warm_room : bool;           (** Keep patient/OR warm *)
-  cad_req_prewarm_crossmatch : bool;
-  cad_req_avoid_cold_fluids : bool;
-  cad_req_plasma_exchange : bool      (** For severe/refractory cases *)
-}.
-
-Definition cad_transfusion_requirements (c : ColdAgglutininProfile)
-    : CADTransfusionRequirements :=
-  let severity := classify_cad_severity c in
-  match severity with
-  | CAD_Benign => mkCADReq false false false false false
-  | CAD_Mild => mkCADReq true false true false false
-  | CAD_Moderate => mkCADReq true true true true false
-  | CAD_Severe => mkCADReq true true true true false
-  | CAD_Critical => mkCADReq true true true true true
-  end.
-
-(** Blood warmer is required for any severity above benign *)
-Theorem cad_warmer_required_above_benign : forall c,
-  classify_cad_severity c <> CAD_Benign ->
-  cad_req_blood_warmer (cad_transfusion_requirements c) = true.
-Proof.
-  intros c H.
-  unfold cad_transfusion_requirements.
-  destruct (classify_cad_severity c); try reflexivity.
-  exfalso; apply H; reflexivity.
-Qed.
-
-(** High thermal amplitude alone triggers warmer requirement *)
-Theorem high_thermal_requires_precautions :
-  forall titer spec comp hem,
-  cad_req_blood_warmer
-    (cad_transfusion_requirements (mkCADProfile titer 32 spec comp hem)) = true \/
-  titer < cad_titer_low.
-Proof.
-  intros titer spec comp hem.
-  unfold cad_titer_low.
-  destruct (Nat.leb 64 titer) eqn:Htiter.
-  - left. apply cad_warmer_required_above_benign.
-    unfold classify_cad_severity.
-    unfold cad_thermal_threshold, cad_titer_critical, cad_titer_high, cad_titer_moderate, cad_titer_low.
-    simpl cad_hemolysis_present. simpl cad_thermal_amplitude. simpl cad_titer.
-    destruct hem; [intro H; inversion H|].
-    destruct (Nat.leb 4096 titer) eqn:E1; [intro H; inversion H|].
-    destruct (Nat.leb 1024 titer) eqn:E2; [intro H; inversion H|].
-    destruct (Nat.leb 256 titer) eqn:E3; [intro H; inversion H|].
-    rewrite Htiter. intro H; inversion H.
-  - right. apply Nat.leb_gt. exact Htiter.
-Qed.
-
-(** Example: benign cold agglutinin (incidental finding) *)
-Definition cad_example_benign : ColdAgglutininProfile :=
-  mkCADProfile 32 4 Ag_I false false.
-
-(** Example: severe cold agglutinin disease *)
-Definition cad_example_severe : ColdAgglutininProfile :=
-  mkCADProfile 2048 34 Ag_I true true.
-
-Theorem benign_cad_no_warmer :
-  cad_req_blood_warmer (cad_transfusion_requirements cad_example_benign) = false.
-Proof. reflexivity. Qed.
-
-Theorem severe_cad_plasma_exchange :
-  cad_req_plasma_exchange (cad_transfusion_requirements cad_example_severe) = true.
 Proof. reflexivity. Qed.
 
 (** Reaction severity assessment *)
@@ -9174,20 +9374,36 @@ Theorem core_populations_sum_to_1000 :
   forallb pop_sum_exact core_verified_populations = true.
 Proof. vm_compute. reflexivity. Qed.
 
-(** IMPORTANT: Some population data may have minor rounding discrepancies (999-1001).
-    The pop_frequency_normalized function handles this gracefully by always
-    dividing by the actual sum, ensuring frequencies sum to exactly 1.
+(** Population frequency API design:
 
-    For production use, always use pop_frequency_normalized rather than
-    raw pop_frequency when precise proportions are required. *)
+    This formalization provides a UNIFIED approach to population frequencies:
 
-(** Normalized frequency function - always divides by actual sum, not 1000.
-    This ensures frequencies sum to exactly 1 regardless of raw data sum. *)
+    1. pop_frequency (nat): Raw per-mille values from source data
+       - Use for: display, comparison, threshold checks (like is_rare)
+       - Values are in range [0, ~500] typically
+
+    2. pop_frequency_Q (Q): Normalized rational frequency
+       - Use for: all calculations requiring true proportions
+       - Always divides by actual pop_sum, so frequencies sum to exactly 1
+       - Handles source data with minor rounding discrepancies (999-1001 sums)
+
+    3. pop_frequency_normalized: Legacy alias for pop_frequency_Q
+       - Retained for backward compatibility
+       - New code should prefer pop_frequency_Q directly
+
+    The key insight: pop_frequency_Q now uses actual sum (not fixed 1000),
+    so there is no longer a distinction between "raw" and "normalized" Q functions.
+    Both names refer to the same correctly-normalized behavior. *)
+
+(** Alias for backward compatibility - identical to pop_frequency_Q *)
 Open Scope Q_scope.
 Definition pop_frequency_normalized (pop : Population) (bt : BloodType) : Q :=
-  let raw := inject_Z (Z.of_nat (pop_frequency pop bt)) in
-  let total := inject_Z (Z.of_nat (pop_sum pop)) in
-  raw / total.
+  pop_frequency_Q pop bt.
+
+(** Equivalence theorem: normalized is identical to Q frequency *)
+Theorem pop_frequency_normalized_eq : forall pop bt,
+  pop_frequency_normalized pop bt == pop_frequency_Q pop bt.
+Proof. intros. unfold pop_frequency_normalized. reflexivity. Qed.
 
 (** All populations have positive sum - trivially true since all entries are nonneg and
     at least one is positive (every population has O+ > 0) *)
@@ -9377,4 +9593,13 @@ Extraction "transfusion_v2.ml"
   inherits_from valid_child_genotype valid_full_child_genotype
   emergency_donor find_compatible_donors is_rare rare_types
   transfusion_impossible
-  RhAlleleFreq us_rh_allele_frequencies expected_rh_neg_percent.
+  RhAlleleFreq us_rh_allele_frequencies expected_rh_neg_percent
+  ThermalAmplitude ColdAgglutininTiter ColdAgglutininSpecificity CADEtiology
+  ColdAgglutininProfile mkCADProfile cad_titer cad_thermal_amplitude
+  cad_specificity cad_etiology cad_hemoglobin_g_dL cad_reticulocyte_percent
+  cad_ldh_elevated cad_haptoglobin_low
+  cad_clinically_significant cad_active_hemolysis CADSeverity classify_cad_severity
+  BloodWarmerRequirement cad_blood_warmer_requirement
+  SampleHandling cad_sample_handling cad_avoid_room_temp_storage
+  CADTransfusionProtocol mkCADProtocol generate_cad_protocol
+  transfusion_safe_with_cad.
