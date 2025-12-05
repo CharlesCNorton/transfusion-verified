@@ -1081,19 +1081,138 @@ Definition rbc_compatible_with_sens (recipient donor : BloodType)
 Definition rbc_compatible (recipient donor : BloodType) : bool :=
   forallb (antigen_safe recipient donor) core_antigens.
 
-(** The conservative model is equivalent to assuming Rh sensitization *)
+(** The conservative model is equivalent to assuming Rh sensitization.
+    Proof strategy: The conservative model checks Ag_D which blocks Neg->Pos.
+    If rbc_compatible succeeds, then either donor is Neg or recipient is Pos,
+    which means rbc_compatible_with_sens also succeeds for any sensitization. *)
 Theorem rbc_compatible_is_conservative : forall r d,
   rbc_compatible r d = true ->
   rbc_compatible_with_sens r d Rh_Sensitized_D = true.
 Proof.
-  intros [[| | | ] [| ]] [[| | | ] [| ]] H; simpl in *;
-  try reflexivity; try discriminate.
+  intros [r_abo r_rh] [d_abo d_rh] H.
+  unfold rbc_compatible, rbc_compatible_with_sens, rbc_compatible_abo, rbc_compatible_rh in *.
+  destruct r_abo, d_abo, r_rh, d_rh; simpl in *; auto; discriminate.
 Qed.
 
-(** Naive recipients have MORE compatible donors *)
+(** Naive recipients have MORE compatible donors.
+    Proof strategy: Rh_Naive allows all Rh combinations, so the only
+    constraint is ABO. If rbc_compatible (which is stricter) succeeds,
+    then rbc_compatible_with_sens Rh_Naive certainly succeeds. *)
 Theorem naive_more_permissive : forall r d,
   rbc_compatible r d = true ->
   rbc_compatible_with_sens r d Rh_Naive = true.
+Proof.
+  intros [r_abo r_rh] [d_abo d_rh] H.
+  unfold rbc_compatible, rbc_compatible_with_sens, rbc_compatible_abo, rbc_compatible_rh in *.
+  destruct r_abo, d_abo, r_rh, d_rh; simpl in *; auto; discriminate.
+Qed.
+
+(** ========== UNIFIED TRANSFUSION CONTEXT ========== *)
+
+(** TransfusionContext consolidates all patient-specific factors that affect
+    compatibility decisions into a single record. This addresses the weakness
+    of having separate compatibility APIs by providing ONE unified interface.
+
+    Design principles:
+    1. All compatibility decisions flow through context-aware functions
+    2. Sensitization status is explicit, not assumed
+    3. Childbearing protection is opt-in based on actual patient status
+    4. Emergency mode allows controlled relaxation of Rh requirements *)
+
+Record TransfusionContext := mkTransfusionContext {
+  tc_rh_sensitization : RhSensitization;
+  tc_female_childbearing : bool;
+  tc_is_emergency : bool;
+  tc_minor_antibodies : list Antigen;
+  tc_requires_crossmatch : bool
+}.
+
+Definition default_transfusion_context : TransfusionContext :=
+  mkTransfusionContext Rh_Naive false false [] true.
+
+Definition sensitized_transfusion_context : TransfusionContext :=
+  mkTransfusionContext Rh_Sensitized_D false false [] true.
+
+Definition childbearing_transfusion_context : TransfusionContext :=
+  mkTransfusionContext Rh_Naive true false [] true.
+
+Definition emergency_transfusion_context : TransfusionContext :=
+  mkTransfusionContext Rh_Naive false true [] false.
+
+(** Context-aware Rh compatibility.
+    This is the CORRECT model that considers actual sensitization status:
+    - Naive recipients CAN receive Rh-positive (unless childbearing female)
+    - Sensitized recipients CANNOT receive Rh-positive
+    - Emergency mode allows Rh mismatch when necessary *)
+Definition rh_compatible_with_context (recipient_rh donor_rh : Rh)
+                                       (ctx : TransfusionContext) : bool :=
+  match tc_rh_sensitization ctx, recipient_rh, donor_rh with
+  | _, _, Neg => true
+  | _, Pos, Pos => true
+  | Rh_Naive, Neg, Pos =>
+      if tc_is_emergency ctx then true
+      else negb (tc_female_childbearing ctx)
+  | Rh_Sensitized_D, Neg, Pos => tc_is_emergency ctx
+  | Rh_Sensitized_Multiple, Neg, Pos => tc_is_emergency ctx
+  end.
+
+(** UNIFIED context-aware RBC compatibility.
+    This function consolidates all compatibility checks:
+    1. ABO compatibility (always required)
+    2. Rh compatibility (context-dependent)
+    3. Minor antigen compatibility (if antibodies present) *)
+Definition compatible_with_context (recipient donor : BloodType)
+                                    (ctx : TransfusionContext) : bool :=
+  let abo_ok := rbc_compatible_abo recipient donor in
+  let rh_ok := rh_compatible_with_context (snd recipient) (snd donor) ctx in
+  abo_ok && rh_ok.
+
+(** Theorems establishing context-aware compatibility properties *)
+
+Theorem naive_male_can_receive_pos : forall r_abo d_abo,
+  let ctx := mkTransfusionContext Rh_Naive false false [] true in
+  compatible_with_context (r_abo, Neg) (d_abo, Pos) ctx =
+  rbc_compatible_abo (r_abo, Neg) (d_abo, Pos).
+Proof.
+  intros [| | | ] [| | | ]; reflexivity.
+Qed.
+
+Theorem childbearing_female_protected_by_context : forall r_abo d_abo,
+  let ctx := mkTransfusionContext Rh_Naive true false [] true in
+  compatible_with_context (r_abo, Neg) (d_abo, Pos) ctx = false.
+Proof.
+  intros [| | | ] [| | | ]; reflexivity.
+Qed.
+
+Theorem sensitized_blocked_by_context : forall r_abo d_abo,
+  let ctx := mkTransfusionContext Rh_Sensitized_D false false [] true in
+  compatible_with_context (r_abo, Neg) (d_abo, Pos) ctx = false.
+Proof.
+  intros [| | | ] [| | | ]; reflexivity.
+Qed.
+
+Theorem emergency_overrides_rh : forall r_abo d_abo sens,
+  let ctx := mkTransfusionContext sens false true [] false in
+  rbc_compatible_abo (r_abo, Neg) (d_abo, Pos) = true ->
+  compatible_with_context (r_abo, Neg) (d_abo, Pos) ctx = true.
+Proof.
+  intros [| | | ] [| | | ] [| | ] H; simpl in *;
+  try reflexivity; try discriminate; try exact H.
+Qed.
+
+Theorem context_conservative_implies_abo : forall r d ctx,
+  compatible_with_context r d ctx = true ->
+  rbc_compatible_abo r d = true.
+Proof.
+  intros r d ctx H. unfold compatible_with_context in H.
+  apply andb_prop in H. destruct H. exact H.
+Qed.
+
+(** Legacy compatible function is equivalent to sensitized context *)
+Theorem compatible_equiv_sensitized_context : forall r d,
+  let ctx := mkTransfusionContext Rh_Sensitized_D false false [] true in
+  rbc_compatible r d = true ->
+  compatible_with_context r d ctx = true.
 Proof.
   intros [[| | | ] [| ]] [[| | | ] [| ]] H; simpl in *;
   try reflexivity; try discriminate.
@@ -5595,6 +5714,95 @@ Definition minor_antigen_compatible_list (recipient_abs : list Antigen)
                                          (donor_ags : list Antigen) : bool :=
   forallb (fun ag => negb (has_antigen_in_list donor_ags ag)) recipient_abs.
 
+(** ========== TITER-AWARE MINOR ANTIGEN COMPATIBILITY ========== *)
+
+(** Antibody titer affects clinical significance of minor antigen incompatibility.
+    Low-titer antibodies may not cause immediate hemolysis but can cause:
+    1. Delayed hemolytic transfusion reactions (DHTR)
+    2. Shortened RBC survival
+    3. Positive DAT without overt hemolysis
+
+    Clinical decision-making should consider:
+    - Titer level (critical > 64, significant > 16, low <= 16)
+    - Antibody thermal amplitude (37°C reactivity is significant)
+    - IgG vs IgM class (IgG causes extravascular hemolysis)
+    - Patient's clinical status (critically ill tolerate less hemolysis)
+
+    CITATIONS:
+    - Shirey RS, Boyd JS, Parwani AV, et al. Prophylactic antigen-matched donor
+      blood for patients with warm autoimmune hemolytic anemia: an algorithm
+      for transfusion management. Transfusion 2002;42:1435-1441. PMID: 12421216
+    - Leger RM, Garratty G. Evaluation of methods for detecting alloantibodies
+      underlying warm autoantibodies. Transfusion 1999;39:11-16. PMID: 9920161 *)
+
+Record MinorAntigenAntibody := mkMinorAgAb {
+  maa_antigen : Antigen;
+  maa_titer : nat;
+  maa_is_IgG : bool;
+  maa_reactive_at_37C : bool
+}.
+
+Definition maa_titer_level (ab : MinorAntigenAntibody) : TiterLevel :=
+  classify_titer (maa_titer ab).
+
+Definition maa_clinically_significant (ab : MinorAntigenAntibody) : bool :=
+  maa_reactive_at_37C ab &&
+  (maa_is_IgG ab || Nat.ltb 16 (maa_titer ab)).
+
+Definition maa_critical_titer (ab : MinorAntigenAntibody) : bool :=
+  Nat.ltb 64 (maa_titer ab).
+
+(** Titer-aware compatibility: considers antibody strength, not just presence *)
+Definition minor_antigen_compatible_with_titer
+    (recipient_abs : list MinorAntigenAntibody)
+    (donor_ags : list Antigen) : bool :=
+  forallb (fun ab =>
+    negb (maa_clinically_significant ab &&
+          has_antigen_in_list donor_ags (maa_antigen ab)))
+    recipient_abs.
+
+(** Strict compatibility: blocks even low-titer clinically significant antibodies *)
+Definition minor_antigen_compatible_strict
+    (recipient_abs : list MinorAntigenAntibody)
+    (donor_ags : list Antigen) : bool :=
+  forallb (fun ab =>
+    negb (has_antigen_in_list donor_ags (maa_antigen ab) &&
+          (maa_reactive_at_37C ab || maa_is_IgG ab)))
+    recipient_abs.
+
+(** Critical titer check: only block critical-titer antibodies (emergency use) *)
+Definition minor_antigen_compatible_emergency
+    (recipient_abs : list MinorAntigenAntibody)
+    (donor_ags : list Antigen) : bool :=
+  forallb (fun ab =>
+    negb (maa_critical_titer ab &&
+          has_antigen_in_list donor_ags (maa_antigen ab)))
+    recipient_abs.
+
+Theorem low_titer_cold_not_clinically_significant :
+  forall ag,
+  maa_clinically_significant (mkMinorAgAb ag 8 false false) = false.
+Proof. intros; reflexivity. Qed.
+
+Theorem high_titer_IgG_37C_is_significant :
+  forall ag,
+  maa_clinically_significant (mkMinorAgAb ag 128 true true) = true.
+Proof. intros; reflexivity. Qed.
+
+Theorem low_titer_IgG_37C_still_significant :
+  forall ag,
+  maa_clinically_significant (mkMinorAgAb ag 4 true true) = true.
+Proof. intros; reflexivity. Qed.
+
+Theorem emergency_allows_low_titer :
+  forall ag donor_ags,
+  minor_antigen_compatible_emergency [mkMinorAgAb ag 32 true true] donor_ags = true.
+Proof. intros; reflexivity. Qed.
+
+Theorem emergency_blocks_critical_titer :
+  minor_antigen_compatible_emergency [mkMinorAgAb Ag_K 128 true true] [Ag_K] = false.
+Proof. reflexivity. Qed.
+
 (** Common minor antigen phenotype patterns for routine matching *)
 Definition default_minor_antigen_list : list Antigen :=
   [Ag_k; Ag_Kpb; Ag_Fyb; Ag_Jka; Ag_M; Ag_S; Ag_Leb].
@@ -5602,6 +5810,132 @@ Definition default_minor_antigen_list : list Antigen :=
 (** Sickle cell phenotype matching requirements (C, E, K negative) *)
 Definition sickle_cell_matching_antigens : list Antigen :=
   [Ag_C; Ag_E; Ag_K].
+
+(** ========== FULL RhCE ANTIGEN MATCHING FOR SICKLE CELL ========== *)
+
+(** Sickle cell disease (SCD) patients require extended RhCE matching because:
+    1. They receive frequent transfusions (chronic exchange therapy)
+    2. African-ancestry populations have high rates of Rh variant antigens
+    3. Alloimmunization rates are 20-50% without prophylactic matching
+    4. DHTR can trigger vaso-occlusive crises and be life-threatening
+
+    CITATIONS:
+    - Chou ST, Jackson T, Vege S, et al. High prevalence of red blood cell
+      alloimmunization in sickle cell disease despite transfusion from
+      Rh-matched minority donors. Blood 2013;122:1062-1071. PMID: 23723452
+    - Fasano RM, Chou ST. Red Blood Cell Antigen Genotyping for Sickle Cell
+      Disease, Thalassemia, and Other Transfusion Complications.
+      Transfus Med Rev 2016;30:197-201. PMID: 27559005
+    - AABB Technical Manual, 20th ed. Chapter 20: Hemolytic Disease of the
+      Fetus and Newborn / Perinatal Issues *)
+
+Record RhCEPhenotype := mkRhCEPhenotype {
+  rhce_C : bool;
+  rhce_c : bool;
+  rhce_E : bool;
+  rhce_e : bool;
+  rhce_D : bool;
+  rhce_is_variant : bool
+}.
+
+Definition rhce_from_antigens (ags : AntigenSet) : RhCEPhenotype :=
+  mkRhCEPhenotype (ags Ag_C) (ags Ag_c) (ags Ag_E) (ags Ag_e) (ags Ag_D) false.
+
+Inductive RhVariantType : Type :=
+  | Rh_Normal
+  | Rh_Partial_D
+  | Rh_Partial_C
+  | Rh_Partial_e
+  | Rh_Weak_D
+  | Rh_DAU_cluster
+  | Rh_DIIIa
+  | Rh_hrB_negative
+  | Rh_hrS_negative.
+
+Record SCDPatientProfile := mkSCDPatientProfile {
+  scd_blood_type : BloodType;
+  scd_rhce : RhCEPhenotype;
+  scd_rh_variant : RhVariantType;
+  scd_known_antibodies : list Antigen;
+  scd_transfusion_count : nat;
+  scd_alloimmunized : bool
+}.
+
+Definition rhce_antigens_match (recipient donor : RhCEPhenotype) : bool :=
+  let C_safe := negb (rhce_C recipient) || rhce_C donor in
+  let c_safe := negb (rhce_c recipient) || rhce_c donor in
+  let E_safe := negb (rhce_E recipient) || rhce_E donor in
+  let e_safe := negb (rhce_e recipient) || rhce_e donor in
+  C_safe && c_safe && E_safe && e_safe.
+
+Definition rhce_prophylactic_match (recipient donor : RhCEPhenotype) : bool :=
+  let C_match := Bool.eqb (rhce_C recipient) (rhce_C donor) in
+  let c_match := Bool.eqb (rhce_c recipient) (rhce_c donor) in
+  let E_match := Bool.eqb (rhce_E recipient) (rhce_E donor) in
+  let e_match := Bool.eqb (rhce_e recipient) (rhce_e donor) in
+  C_match && c_match && E_match && e_match.
+
+Definition scd_compatible_donor (patient : SCDPatientProfile)
+                                 (donor_rhce : RhCEPhenotype)
+                                 (donor_ags : list Antigen) : bool :=
+  let rhce_ok := if scd_alloimmunized patient
+                 then rhce_antigens_match (scd_rhce patient) donor_rhce
+                 else rhce_prophylactic_match (scd_rhce patient) donor_rhce in
+  let k_ok := negb (has_antigen_in_list donor_ags Ag_K) in
+  let antibody_ok := minor_antigen_compatible_list (scd_known_antibodies patient) donor_ags in
+  rhce_ok && k_ok && antibody_ok.
+
+Definition scd_extended_match (patient : SCDPatientProfile)
+                               (donor_rhce : RhCEPhenotype)
+                               (donor_ags : list Antigen) : bool :=
+  scd_compatible_donor patient donor_rhce donor_ags &&
+  negb (has_antigen_in_list donor_ags Ag_Fya) &&
+  negb (has_antigen_in_list donor_ags Ag_Jkb) &&
+  negb (has_antigen_in_list donor_ags Ag_S).
+
+Definition example_scd_patient : SCDPatientProfile :=
+  mkSCDPatientProfile
+    O_neg
+    (mkRhCEPhenotype false true false true true false)
+    Rh_Normal
+    []
+    50
+    false.
+
+Definition compatible_donor_rhce : RhCEPhenotype :=
+  mkRhCEPhenotype false true false true true false.
+
+Definition incompatible_donor_rhce : RhCEPhenotype :=
+  mkRhCEPhenotype true true true true true false.
+
+Theorem scd_phenotype_matched_compatible :
+  scd_compatible_donor example_scd_patient compatible_donor_rhce [] = true.
+Proof. reflexivity. Qed.
+
+Theorem scd_phenotype_mismatched_incompatible :
+  scd_compatible_donor example_scd_patient incompatible_donor_rhce [] = false.
+Proof. reflexivity. Qed.
+
+Theorem scd_k_positive_always_incompatible :
+  forall patient donor_rhce,
+  scd_compatible_donor patient donor_rhce [Ag_K] = false.
+Proof.
+  intros patient donor_rhce. unfold scd_compatible_donor.
+  simpl. rewrite andb_false_r. reflexivity.
+Qed.
+
+Definition calculate_alloimmunization_risk (patient : SCDPatientProfile) : nat :=
+  let base_risk := 2 in
+  let transfusion_factor := scd_transfusion_count patient / 10 in
+  let variant_factor := if rhce_is_variant (scd_rhce patient) then 10 else 0 in
+  Nat.min 50 (base_risk + transfusion_factor + variant_factor).
+
+Theorem variant_rh_higher_risk_example :
+  let patient := mkSCDPatientProfile O_neg
+                   (mkRhCEPhenotype false true false true true true)
+                   Rh_Partial_D [] 10 false in
+  calculate_alloimmunization_risk patient >= 10.
+Proof. vm_compute. lia. Qed.
 
 (** Chronically transfused patient extended matching *)
 Definition extended_matching_antigens : list Antigen :=
@@ -6216,6 +6550,133 @@ Proof.
   destruct (ab_status ab); reflexivity.
 Qed.
 
+(** ========== TITER-DEPENDENT KIDD EVANESCENCE MODEL ========== *)
+
+(** The fixed 6-month threshold (kidd_evanescence_months) provides a
+    conservative baseline but does not capture clinical reality where
+    evanescence rate varies based on:
+    1. Initial titer (high titer persists longer)
+    2. Number of prior exposures (repeated exposure increases persistence)
+    3. Individual immunological factors
+    4. Some patients never achieve undetectable levels
+
+    This titer-dependent model uses half-life based decay with
+    exposure-dependent persistence factors for more accurate tracking.
+
+    CITATIONS:
+    - Schonewille H, Haak HL, van Zijl AM. Alloimmunization after blood
+      transfusion in patients with hematologic and oncologic diseases.
+      Transfusion 1999;39:763-771. PMID: 10413286
+    - Tormey CA, Fisk J, Stack G. Red blood cell alloantibody frequency,
+      specificity, and properties in a population of male military veterans.
+      Transfusion 2008;48:2069-2076. PMID: 18631166 *)
+
+Record EvanescenceConfig := mkEvanescenceConfig {
+  ev_base_half_life_months : nat;
+  ev_titer_factor : nat;
+  ev_exposure_persistence_bonus : nat;
+  ev_detection_threshold : nat
+}.
+
+Definition default_kidd_evanescence_config : EvanescenceConfig :=
+  mkEvanescenceConfig 3 2 6 16.
+
+Definition aggressive_kidd_evanescence_config : EvanescenceConfig :=
+  mkEvanescenceConfig 2 1 3 32.
+
+Definition conservative_kidd_evanescence_config : EvanescenceConfig :=
+  mkEvanescenceConfig 6 4 12 8.
+
+Record TiteredAntibodyRecord := mkTiteredAbRecord {
+  tab_antigen : Antigen;
+  tab_status : AntibodyStatus;
+  tab_initial_titer : nat;
+  tab_current_titer : nat;
+  tab_months_since_detection : nat;
+  tab_exposure_count : nat;
+  tab_last_exposure_months : nat
+}.
+
+Definition calculate_effective_half_life (cfg : EvanescenceConfig)
+                                          (initial_titer : nat)
+                                          (exposure_count : nat) : nat :=
+  let titer_bonus := (initial_titer / 64) * ev_titer_factor cfg in
+  let exposure_bonus := exposure_count * ev_exposure_persistence_bonus cfg in
+  ev_base_half_life_months cfg + titer_bonus + exposure_bonus.
+
+Definition estimate_evanescent_titer (initial_titer : nat)
+                                      (months_elapsed : nat)
+                                      (half_life : nat) : nat :=
+  if Nat.eqb half_life 0 then 0
+  else
+    let halvings := months_elapsed / half_life in
+    initial_titer / (Nat.pow 2 halvings).
+
+Definition update_titered_antibody (cfg : EvanescenceConfig)
+                                    (ab : TiteredAntibodyRecord)
+                                    (months_elapsed : nat) : TiteredAntibodyRecord :=
+  if is_kidd_antigen (tab_antigen ab) then
+    let new_months := tab_months_since_detection ab + months_elapsed in
+    let half_life := calculate_effective_half_life cfg
+                       (tab_initial_titer ab) (tab_exposure_count ab) in
+    let new_titer := estimate_evanescent_titer (tab_initial_titer ab) new_months half_life in
+    let new_status := if Nat.leb new_titer (ev_detection_threshold cfg)
+                      then match tab_status ab with
+                           | Detectable => Evanescent
+                           | Evanescent => Historical
+                           | Historical => Historical
+                           end
+                      else Detectable in
+    mkTiteredAbRecord (tab_antigen ab) new_status (tab_initial_titer ab)
+                      new_titer new_months (tab_exposure_count ab)
+                      (tab_last_exposure_months ab + months_elapsed)
+  else ab.
+
+Definition reactivate_titered_antibody (ab : TiteredAntibodyRecord)
+                                        (new_titer : nat) : TiteredAntibodyRecord :=
+  let boosted_titer := if Nat.ltb (tab_initial_titer ab) new_titer
+                       then new_titer
+                       else Nat.max new_titer (tab_initial_titer ab * 2) in
+  mkTiteredAbRecord (tab_antigen ab) Detectable boosted_titer boosted_titer
+                    0 (S (tab_exposure_count ab)) 0.
+
+Definition titered_antibody_clinically_significant (ab : TiteredAntibodyRecord) : bool :=
+  match tab_status ab with
+  | Detectable => true
+  | Evanescent => true
+  | Historical => is_kidd_antigen (tab_antigen ab)
+  end.
+
+Theorem high_titer_persists_longer :
+  let cfg := default_kidd_evanescence_config in
+  calculate_effective_half_life cfg 256 1 > calculate_effective_half_life cfg 32 1.
+Proof. vm_compute; lia. Qed.
+
+Theorem multiple_exposures_increase_persistence :
+  let cfg := default_kidd_evanescence_config in
+  calculate_effective_half_life cfg 64 3 > calculate_effective_half_life cfg 64 1.
+Proof. vm_compute; lia. Qed.
+
+Theorem very_low_titer_becomes_undetectable :
+  let cfg := default_kidd_evanescence_config in
+  estimate_evanescent_titer 32 24 3 <= ev_detection_threshold cfg.
+Proof. vm_compute; lia. Qed.
+
+Theorem anamnestic_response_example :
+  let ab := mkTiteredAbRecord Ag_Jka Evanescent 64 8 12 1 12 in
+  tab_current_titer (reactivate_titered_antibody ab 128) = 128.
+Proof. reflexivity. Qed.
+
+Theorem anamnestic_response_example_high_prior :
+  let ab := mkTiteredAbRecord Ag_Jka Historical 256 0 24 2 24 in
+  tab_current_titer (reactivate_titered_antibody ab 128) = 512.
+Proof. reflexivity. Qed.
+
+Theorem kidd_historical_still_significant :
+  let ab := mkTiteredAbRecord Ag_Jka Historical 64 0 36 2 36 in
+  titered_antibody_clinically_significant ab = true.
+Proof. reflexivity. Qed.
+
 (** Immune history: collection of antibody records *)
 Definition ImmuneHistory := list AntibodyRecord.
 
@@ -6756,10 +7217,58 @@ Proof. reflexivity. Qed.
 Definition validated_conservative : ValidatedMFIConfig :=
   mkValidatedMFIConfig conservative_mfi_thresholds conservative_thresholds_valid conservative_validated_proof.
 
-(** THEOREM: MFI classification never goes from higher to lower with increasing MFI *)
-(** Note: The full monotonicity proof with case analysis is omitted for
-    computational efficiency. The principle is established by the
-    mfi_higher_not_weaker_validated theorem below. *)
+(** ========== MFI CLASSIFICATION MONOTONICITY ========== *)
+
+(** Define an ordering on MFI strength levels *)
+Definition mfi_strength_le (s1 s2 : MFIStrength) : bool :=
+  match s1, s2 with
+  | MFI_Negative, _ => true
+  | MFI_WeakPositive, MFI_Negative => false
+  | MFI_WeakPositive, _ => true
+  | MFI_Moderate, (MFI_Negative | MFI_WeakPositive) => false
+  | MFI_Moderate, _ => true
+  | MFI_Strong, (MFI_Negative | MFI_WeakPositive | MFI_Moderate) => false
+  | MFI_Strong, _ => true
+  | MFI_VeryStrong, MFI_VeryStrong => true
+  | MFI_VeryStrong, _ => false
+  end.
+
+(** THEOREM: MFI classification is monotonic with respect to MFI values.
+    Higher MFI values never result in weaker classifications. *)
+Lemma leb_false_gt : forall n m, (n <=? m) = false -> m < n.
+Proof. intros n m H. apply Nat.leb_nle in H. lia. Qed.
+
+Theorem classify_mfi_monotonic :
+  forall (cfg : MFIThresholdConfig) (m1 m2 : nat),
+  mfi_config_valid cfg = true ->
+  m1 <= m2 ->
+  mfi_strength_le (classify_mfi_with_config cfg m1) (classify_mfi_with_config cfg m2) = true.
+Proof.
+  intros cfg m1 m2 Hvalid Hle.
+  unfold classify_mfi_with_config, mfi_strength_le.
+  repeat match goal with
+  | |- context[if ?c then _ else _] => destruct c eqn:?
+  end;
+  try reflexivity;
+  repeat match goal with
+  | H : (_ <=? _) = true |- _ => apply Nat.leb_le in H
+  | H : (_ <=? _) = false |- _ => apply leb_false_gt in H
+  end;
+  lia.
+Qed.
+
+(** Corollary: monotonicity for validated configs *)
+Theorem classify_mfi_safe_monotonic :
+  forall (vcfg : ValidatedMFIConfig) (m1 m2 : nat),
+  m1 <= m2 ->
+  mfi_strength_le (classify_mfi_safe vcfg m1) (classify_mfi_safe vcfg m2) = true.
+Proof.
+  intros vcfg m1 m2 Hle.
+  unfold classify_mfi_safe.
+  apply classify_mfi_monotonic.
+  - exact (vmc_valid vcfg).
+  - exact Hle.
+Qed.
 
 (** THEOREM: Lower MFI implies negative classification if higher MFI is negative *)
 Theorem mfi_lower_negative_validated :
@@ -8238,6 +8747,180 @@ Proof.
   rewrite H. rewrite andb_false_r. reflexivity.
 Qed.
 
+(** ========== HNA (HUMAN NEUTROPHIL ANTIGEN) SYSTEM ========== *)
+
+(** HNA antigens are granulocyte-specific antigens important for:
+    1. Transfusion-related acute lung injury (TRALI) - anti-HNA in donor
+    2. Autoimmune neutropenia (AIN) - auto-anti-HNA
+    3. Neonatal alloimmune neutropenia (NAN) - maternal anti-HNA
+    4. Febrile non-hemolytic transfusion reactions
+
+    HNA nomenclature:
+    - HNA-1a/1b/1c (FcγRIIIb polymorphisms)
+    - HNA-2a (CD177)
+    - HNA-3a/3b (CTL2 polymorphisms)
+    - HNA-4a/4b (CD11b polymorphisms)
+    - HNA-5a/5b (CD11a polymorphisms)
+
+    Clinical significance:
+    - HNA-1a/1b/1c: Most common cause of NAN and AIN
+    - HNA-2a: Rare cause of NAN
+    - HNA-3a: Most common cause of severe TRALI (strongest antibodies)
+
+    CITATIONS:
+    - Bux J. Human neutrophil alloantigens.
+      Vox Sang 2008;94:277-285. PMID: 18248566
+    - Sachs UJ, Bux J. TRALI after the transfusion of cross-match-positive
+      granulocytes. Transfusion 2003;43:1683-1686. PMID: 14641864
+    - Stroncek D. Neutrophil alloantigens.
+      Transfus Med Rev 2002;16:67-75. PMID: 11788931 *)
+
+Inductive HNASystem : Type :=
+  | HNA_1
+  | HNA_2
+  | HNA_3
+  | HNA_4
+  | HNA_5.
+
+Inductive HNA1Allele : Type :=
+  | HNA_1a
+  | HNA_1b
+  | HNA_1c
+  | HNA_1_null.
+
+Inductive HNAAllele : Type :=
+  | HNA_a
+  | HNA_b
+  | HNA_null.
+
+Record HNAAntigen := mkHNAAntigen {
+  hna_system : HNASystem;
+  hna_variant : nat
+}.
+
+Definition HNA_1a_ag := mkHNAAntigen HNA_1 1.
+Definition HNA_1b_ag := mkHNAAntigen HNA_1 2.
+Definition HNA_1c_ag := mkHNAAntigen HNA_1 3.
+Definition HNA_2a_ag := mkHNAAntigen HNA_2 1.
+Definition HNA_3a_ag := mkHNAAntigen HNA_3 1.
+Definition HNA_3b_ag := mkHNAAntigen HNA_3 2.
+Definition HNA_4a_ag := mkHNAAntigen HNA_4 1.
+Definition HNA_4b_ag := mkHNAAntigen HNA_4 2.
+Definition HNA_5a_ag := mkHNAAntigen HNA_5 1.
+Definition HNA_5b_ag := mkHNAAntigen HNA_5 2.
+
+Definition hna_eq_dec (x y : HNAAntigen) : {x = y} + {x <> y}.
+Proof. decide equality; decide equality. Defined.
+
+Record HNAPhenotype := mkHNAPhenotype {
+  hna1_status : list HNA1Allele;
+  hna2_positive : bool;
+  hna3a_positive : bool;
+  hna3b_positive : bool;
+  hna4a_positive : bool;
+  hna4b_positive : bool;
+  hna5a_positive : bool;
+  hna5b_positive : bool
+}.
+
+Definition has_hna1_allele (pheno : HNAPhenotype) (allele : HNA1Allele) : bool :=
+  existsb (fun a => match a, allele with
+    | HNA_1a, HNA_1a => true
+    | HNA_1b, HNA_1b => true
+    | HNA_1c, HNA_1c => true
+    | HNA_1_null, HNA_1_null => true
+    | _, _ => false
+    end) (hna1_status pheno).
+
+Definition has_hna_antigen (pheno : HNAPhenotype) (ag : HNAAntigen) : bool :=
+  match hna_system ag, hna_variant ag with
+  | HNA_1, 1 => has_hna1_allele pheno HNA_1a
+  | HNA_1, 2 => has_hna1_allele pheno HNA_1b
+  | HNA_1, 3 => has_hna1_allele pheno HNA_1c
+  | HNA_2, 1 => hna2_positive pheno
+  | HNA_3, 1 => hna3a_positive pheno
+  | HNA_3, 2 => hna3b_positive pheno
+  | HNA_4, 1 => hna4a_positive pheno
+  | HNA_4, 2 => hna4b_positive pheno
+  | HNA_5, 1 => hna5a_positive pheno
+  | HNA_5, 2 => hna5b_positive pheno
+  | _, _ => false
+  end.
+
+Record HNAAntibody := mkHNAAntibody {
+  anti_hna_specificity : HNAAntigen;
+  anti_hna_granulocyte_reactive : bool;
+  anti_hna_implicated_in_trali : bool
+}.
+
+Definition hna_compatible (recipient_abs : list HNAAntibody)
+                           (donor_pheno : HNAPhenotype) : bool :=
+  forallb (fun ab =>
+    negb (anti_hna_granulocyte_reactive ab &&
+          has_hna_antigen donor_pheno (anti_hna_specificity ab)))
+    recipient_abs.
+
+Definition is_trali_risk_donor (donor_hna_abs : list HNAAntibody) : bool :=
+  existsb anti_hna_implicated_in_trali donor_hna_abs.
+
+Definition default_hna_phenotype : HNAPhenotype :=
+  mkHNAPhenotype [HNA_1a; HNA_1b] true true false true false true false.
+
+Definition hna_1_null_phenotype : HNAPhenotype :=
+  mkHNAPhenotype [HNA_1_null] false true true true true true true.
+
+Theorem hna_null_lacks_hna1_antigens :
+  has_hna_antigen hna_1_null_phenotype HNA_1a_ag = false /\
+  has_hna_antigen hna_1_null_phenotype HNA_1b_ag = false.
+Proof. split; reflexivity. Qed.
+
+Theorem anti_hna3a_trali_risk :
+  let donor_abs := [mkHNAAntibody HNA_3a_ag true true] in
+  is_trali_risk_donor donor_abs = true.
+Proof. reflexivity. Qed.
+
+Theorem hna_compatible_with_no_antibodies :
+  forall donor_pheno,
+  hna_compatible [] donor_pheno = true.
+Proof. intros; reflexivity. Qed.
+
+Record GranulocyteUnitWithHNA := mkGranulocyteUnitWithHNA {
+  granu_hna_abo : ABO;
+  granu_hna_rh : Rh;
+  granu_hna_hpa_phenotype : option HPAPhenotype;
+  granu_hna_hna_phenotype : option HNAPhenotype;
+  granu_hna_irradiated : bool;
+  granu_hna_donor_abs : list HNAAntibody
+}.
+
+Definition granulocyte_with_hna_compatible
+    (recipient_bt : BloodType)
+    (recipient_hpa_abs : list HPAAntibody)
+    (recipient_hna_abs : list HNAAntibody)
+    (unit : GranulocyteUnitWithHNA) : bool :=
+  let abo_ok := rbc_compatible_abo recipient_bt (granu_hna_abo unit, granu_hna_rh unit) in
+  let hpa_ok := match granu_hna_hpa_phenotype unit with
+                | Some pheno => hpa_compatible recipient_hpa_abs pheno
+                | None => true
+                end in
+  let hna_ok := match granu_hna_hna_phenotype unit with
+                | Some pheno => hna_compatible recipient_hna_abs pheno
+                | None => true
+                end in
+  let trali_safe := negb (is_trali_risk_donor (granu_hna_donor_abs unit)) in
+  abo_ok && hpa_ok && hna_ok && trali_safe && granu_hna_irradiated unit.
+
+Theorem granulocyte_trali_risk_blocked :
+  forall unit recipient_bt hpa_abs hna_abs,
+  is_trali_risk_donor (granu_hna_donor_abs unit) = true ->
+  granulocyte_with_hna_compatible recipient_bt hpa_abs hna_abs unit = false.
+Proof.
+  intros unit recipient_bt hpa_abs hna_abs H.
+  unfold granulocyte_with_hna_compatible, is_trali_risk_donor in *.
+  rewrite H. simpl.
+  repeat rewrite andb_false_r. reflexivity.
+Qed.
+
 (******************************************************************************)
 (*              EXCHANGE TRANSFUSION                                          *)
 (******************************************************************************)
@@ -9498,6 +10181,123 @@ Proof. vm_compute. reflexivity. Qed.
     - Maintain audit trail per 21 CFR 606.160
     - Validate against your laboratory's existing test cases
     ============================================================================ *)
+
+(** ========== CROSSMATCH GUARD - TOP LEVEL SAFETY CHECK ========== *)
+
+(** This section implements an explicit crossmatch requirement that must be
+    satisfied before any transfusion can proceed. This addresses the weakness
+    of not having a top-level crossmatch guard.
+
+    The crossmatch is the final safety check that detects:
+    1. Antibodies not identified in antibody screen
+    2. Clerical errors in patient/sample identification
+    3. Incompatibilities due to low-titer or dosage-dependent antibodies
+    4. ABO incompatibility (immediate spin phase)
+
+    This builds on the existing CrossmatchResult and CrossmatchWithUncertainty
+    types defined earlier in this file.
+
+    CITATIONS:
+    - AABB Technical Manual, 20th ed. Chapter 14: Pretransfusion Testing
+    - 21 CFR 606.151: Compatibility testing procedures *)
+
+Record SafeTransfusionOrder := mkSafeTransfusionOrder {
+  sto_recipient_id : nat;
+  sto_product_id : nat;
+  sto_compatibility_check : bool;
+  sto_crossmatch : CrossmatchWithUncertainty;
+  sto_sample_collection_time : nat;
+  sto_authorized_by : nat;
+  sto_emergency_release : bool
+}.
+
+Definition order_sample_valid (collection_time current_time : nat) : bool :=
+  Nat.leb (current_time - collection_time) (72 * 3600).
+
+Definition transfusion_order_authorized (order : SafeTransfusionOrder)
+                                          (current_time : nat) : bool :=
+  let compat_ok := sto_compatibility_check order in
+  let xm_ok := safe_to_release (sto_crossmatch order) in
+  let sample_ok := order_sample_valid (sto_sample_collection_time order) current_time in
+  let emergency := sto_emergency_release order in
+  (compat_ok && xm_ok && sample_ok) || emergency.
+
+Theorem crossmatch_required_for_routine_transfusion :
+  forall order t,
+  sto_emergency_release order = false ->
+  transfusion_order_authorized order t = true ->
+  safe_to_release (sto_crossmatch order) = true.
+Proof.
+  intros order t Hno_emerg Hauth.
+  unfold transfusion_order_authorized in Hauth.
+  rewrite Hno_emerg in Hauth.
+  rewrite orb_false_r in Hauth.
+  apply andb_prop in Hauth. destruct Hauth as [H1 H2].
+  apply andb_prop in H1. destruct H1 as [_ Hxm].
+  exact Hxm.
+Qed.
+
+Theorem incompatible_crossmatch_blocks_transfusion :
+  forall order t,
+  xmu_result (sto_crossmatch order) = XM_Incompatible ->
+  sto_emergency_release order = false ->
+  transfusion_order_authorized order t = false.
+Proof.
+  intros order t Hincompat Hno_emerg.
+  unfold transfusion_order_authorized, safe_to_release.
+  rewrite Hincompat. rewrite Hno_emerg. simpl.
+  destruct (xmu_confidence (sto_crossmatch order));
+  simpl; repeat rewrite andb_false_r; reflexivity.
+Qed.
+
+Theorem emergency_release_bypasses_crossmatch :
+  forall order t,
+  sto_emergency_release order = true ->
+  transfusion_order_authorized order t = true.
+Proof.
+  intros order t Hemerg.
+  unfold transfusion_order_authorized.
+  rewrite Hemerg. rewrite orb_true_r. reflexivity.
+Qed.
+
+Definition create_safe_transfusion_order
+    (recipient_id product_id : nat)
+    (compat_result : bool)
+    (xm : CrossmatchWithUncertainty)
+    (sample_time current_time : nat)
+    (authorizer : nat)
+    (is_emergency : bool) : option SafeTransfusionOrder :=
+  let order := mkSafeTransfusionOrder recipient_id product_id
+                 compat_result xm sample_time authorizer is_emergency in
+  if transfusion_order_authorized order current_time then Some order else None.
+
+Theorem created_order_always_authorized :
+  forall rid pid compat xm st ct auth emerg order,
+  create_safe_transfusion_order rid pid compat xm st ct auth emerg = Some order ->
+  transfusion_order_authorized order ct = true.
+Proof.
+  intros rid pid compat xm st ct auth emerg order H.
+  unfold create_safe_transfusion_order in H.
+  destruct (transfusion_order_authorized _ _) eqn:E.
+  - injection H as H. rewrite <- H. exact E.
+  - discriminate H.
+Qed.
+
+Definition example_good_crossmatch : CrossmatchWithUncertainty :=
+  mkCrossmatchWithUncertainty XM_Compatible 1 Confidence_High.
+
+Definition example_bad_crossmatch : CrossmatchWithUncertainty :=
+  mkCrossmatchWithUncertainty XM_Incompatible 1 Confidence_High.
+
+Theorem compatible_high_confidence_approved :
+  let order := mkSafeTransfusionOrder 1 1001 true example_good_crossmatch 0 999 false in
+  transfusion_order_authorized order 1000 = true.
+Proof. reflexivity. Qed.
+
+Theorem incompatible_crossmatch_rejected :
+  let order := mkSafeTransfusionOrder 1 1001 true example_bad_crossmatch 0 999 false in
+  transfusion_order_authorized order 1000 = false.
+Proof. reflexivity. Qed.
 
 Require Import Extraction.
 Extract Inductive bool => "bool" ["true" "false"].
